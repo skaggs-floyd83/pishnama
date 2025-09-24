@@ -8,8 +8,14 @@
   :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
   html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
   .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
-  .bar{padding:10px 14px;display:flex;gap:8px}
-  .tab{flex:1;text-align:center;padding:10px;border:1px solid var(--border);border-radius:999px;background:#0f1a33;color:#cbd5e1}
+  /* Top bar with hamburger */
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
   .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
   .row{display:flex;align-items:center;gap:8px}
   .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
@@ -30,30 +36,32 @@
   .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px;flex:1}
   .rightline{display:flex;justify-content:flex-start} /* RTL: start = right */
   .between{display:flex;justify-content:space-between;align-items:center}
-  .bottom-actions{margin-top:auto;display:flex;justify-content:space-between;align-items:center;padding-top:8px}
 
-/* __AI_PATCH__: Fixed-size preview frames + contain scaling */
-#sofaThumb,
-#frame .thumb {
-  height: 220px !important;
-  width: 100%;
-}
+  /* __AI_PATCH__: Fixed-size preview frames + contain scaling */
+  #sofaThumb,
+  #frame .thumb {
+    height: 220px !important;
+    width: 100%;
+  }
 
+  /* Wizard nav row placed ABOVE the frame */
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+  #navRow .leftmost{margin-left:auto} /* for RTL visual positioning */
 
-/* __AI_PATCH_FIXED_HEIGHT_V2__ */
-#sofaThumb,
-#frame .thumb {
-  height: 220px !important;
-  width: 100%;
-}
+  /* Quality + Generate row moved higher and right-aligned */
+  .top-actions{margin:0 10px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
+
 </style>
 
 </head>
 <body>
 <div class="wrap">
   <div class="bar">
-    <button class="tab" disabled>🛋️ طراحی مبل</button>
-    <button class="tab" onclick="location.href='pillows.html'">🛋️ طراحی کوسن‌ها</button>
+    <button class="hamburger" id="hambtn">☰ منو</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
   </div>
 
   <div class="viewport">
@@ -80,16 +88,21 @@
 
     <!-- STEP 2: Fabric wizard -->
     <section id="step-fabrics" class="section">
+      
+      <!-- (2) NEXT on the leftmost, PREV on the rightmost, above the frame -->
+      <div class="row" id="navRow">
+        <button class="btn" id="prevStep">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
+
       <div class="card" id="frame">
         <div class="thumb">
           <span class="badge" id="wizBadge">پارچه 1 از 1</span>
           <img id="fabImg" alt="">
         </div>
-      </div>
 
-      <div class="controls">
-        <!-- fabric pickers under preview (aligned to right) -->
-        <div class="rightline">
+        <!-- (3) Move fabric selection buttons INSIDE the frame -->
+        <div class="rightline" style="margin-top:8px">
           <div class="row">
             <label class="btn">آپلود پارچه
               <input id="fabFile" type="file" accept="image/*" hidden>
@@ -100,32 +113,28 @@
           </div>
         </div>
 
-        <!-- part selection tags -->
+        <!-- (3) Move part tags INSIDE the frame -->
         <div class="schem" id="schem">
           <button class="part" data-part="back">پشتی</button>
           <button class="part" data-part="seat">نشیمن</button>
           <button class="part" data-part="arms">دسته‌ها</button>
           <button class="part" data-part="all">همه</button>
         </div>
+      </div>
 
-        <!-- Add Fabric: own line, RIGHT side -->
+      <!-- (4) Move quality + generate higher and adjacent, right-aligned -->
+      <div class="top-actions">
+        <div class="toggle" id="qToggle">
+          <button class="active" data-q="standard">کیفیت معمولی</button>
+          <button data-q="high">کیفیت بالا</button>
+        </div>
+        <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+      </div>
+
+      <div class="controls">
+        <!-- Add Fabric stays where it was (under controls), as not requested to move -->
         <div class="rightline">
           <button class="btn" id="addBtn">➕ افزودن</button>
-        </div>
-
-        <!-- wizard nav -->
-        <div class="row" id="navRow">
-          <button class="btn" id="prevStep">قبلی ▶</button>
-          <button class="btn" id="nextBtn">◀ بعدی</button>
-        </div>
-
-        <!-- bottom actions: quality + generate -->
-        <div class="bottom-actions">
-          <div class="toggle" id="qToggle">
-            <button class="active" data-q="standard">کیفیت معمولی</button>
-            <button data-q="high">کیفیت بالا</button>
-          </div>
-          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
         </div>
       </div>
     </section>
@@ -280,6 +289,14 @@
   previewBtn.addEventListener('click', ()=>{
     const q = fabrics[idx].quality || 'standard';
     alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
+  });
+
+  // Hamburger toggle
+  const hambtn=document.getElementById('hambtn');
+  const menu=document.getElementById('menu');
+  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
+  document.addEventListener('click', (e)=>{
+    if(!menu.contains(e.target) && e.target!==hambtn){ menu.classList.remove('show'); }
   });
 </script>
 </body>
