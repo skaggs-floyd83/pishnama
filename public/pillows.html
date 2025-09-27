@@ -3,48 +3,64 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>پیشنما — کوسن‌ها (ویزارد بدون اسکرول)</title>
+<title>پیشنما — کوسن‌ها (نسخه اصلاح‌شده 2)</title>
 <style>
   :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
   html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
-  .wrap{max-width:480px;margin:0 auto; height:100svh; display:flex; flex-direction:column}
-  .bar{padding:10px 14px;display:flex;gap:8px}
-  .tab{flex:1;text-align:center;padding:10px;border:1px solid var(--border);border-radius:999px;background:#0f1a33;color:#cbd5e1}
+  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+
+  /* Hamburger (exactly like sofa) */
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
   .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
   .row{display:flex;align-items:center;gap:8px}
   .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
   .btn.primary{background:var(--blue);border-color:var(--blue)}
   .btn:disabled{opacity:.5;cursor:not-allowed}
-  .hint{color:var(--muted);font-size:.9rem}
-  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:140px;background:#0f172a;overflow:hidden}
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
   .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
-  .footer{margin-top:auto;padding:10px}
   .toggle{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
   .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
   .toggle .active{background:#0f1a33;color:#fff}
+
   .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
   .section{display:none;flex:1;overflow:hidden}
   .section.active{display:flex;flex-direction:column}
-  /* Tagging + overlays */
-  .canvas{position:relative;border:1px dashed var(--border);border-radius:12px;background:#0f172a;overflow:hidden}
-  .canvas img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
-  .overlay{position:absolute;transform:translate(-50%,-50%);width: 16px;height: 16px;border-radius:10px;border:1px solid var(--accent);background-size:cover;background-position:center}
-  .tag{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;border:2px solid var(--accent);color:var(--accent);display:grid;place-items:center;background:rgba(34,197,94,.2);font-weight:700}
 
-/* __AI_PATCH_FIXED_HEIGHT_V3__ */
-#canvas,
-#canvas2 {
-  height: 220px !important;
-  width: 100%;
-}
+  /* Fixed-size preview frames */
+  #baseFrame, #tagFrame { height: 220px !important; width: 100%; }
+
+  /* Prev/Next above the frame */
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+
+  /* Control rows outside the frame */
+  .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px}
+  .rightline{display:flex;justify-content:flex-start;align-items:center;gap:8px}
+  .between{display:flex;justify-content:space-between;align-items:center}
+
+  /* Selection frame similar to image frame */
+  .selectFrame{border:1px dashed var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;align-items:center;gap:10px}
+
+  /* Tag overlays (no numbers/circles) */
+  .overlay{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;border:1px solid var(--accent);background-size:cover;background-position:center}
+
+  .label{color:var(--muted);font-size:.95rem;margin:0 10px 4px}
 </style>
-
 </head>
 <body>
 <div class="wrap">
+  <!-- Top bar -->
   <div class="bar">
-    <button class="tab" onclick="location.href='sofa.html'">🛋️ طراحی مبل</button>
-    <button class="tab" disabled>🛋️ طراحی کوسن‌ها</button>
+    <button class="hamburger" id="hambtn">☰ منو</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
   </div>
 
   <div class="viewport">
@@ -52,34 +68,62 @@
     <section id="step-upload" class="section active">
       <div class="card">
         <h3 style="margin:0 0 8px">📷 آپلود تصویر مبل + کوسن‌ها</h3>
-        <div class="thumb canvas" id="canvas"><img id="baseImg" alt=""></div>
+        <div class="thumb" id="baseFrame"><img id="baseImg" alt=""></div>
         <div class="row" style="margin-top:8px;justify-content:space-between">
           <label class="btn">انتخاب فایل<input id="photoFile" type="file" accept="image/*" hidden></label>
           <label class="btn">دوربین<input id="photoCam" type="file" accept="image/*" capture="environment" hidden></label>
         </div>
-        <p class="hint" style="margin-top:8px">پس از آپلود تصویر، می‌توانید پارچه‌ها را به کوسن‌ها تخصیص دهید.</p>
+        <div class="row" style="margin-top:8px;justify-content:flex-end">
+          <button class="btn primary" id="goNext" disabled>ادامه ◀</button>
+        </div>
       </div>
     </section>
 
-    <!-- STEP 2: Fabric Wizard (one visible step) -->
+    <!-- STEP 2: Tagging & Fabrics -->
     <section id="step-fabrics" class="section">
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <strong id="wizTitle">پارچه 1 از 1</strong>
-        </div>
-        <div class="thumb canvas" id="canvas2" style="margin-top:8px"><img id="baseImg2" alt=""></div>
+      <!-- Prev/Next ABOVE the frame -->
+      <div class="row" id="navRow">
+        <button class="btn" id="prevBtn">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
 
-        <div class="row" style="margin-top:8px;justify-content:space-between">
-          <label class="btn">آپلود پارچه<input id="fabFile" type="file" accept="image/*" hidden></label>
-          <div class="toggle" id="qToggle"><button class="active" data-q="standard">معمولی</button><button data-q="high">بالا</button></div>
-          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+      <div class="card">
+        <div class="thumb" id="tagFrame" style="position:relative"><img id="baseImg2" alt=""></div>
+
+        <!-- Undo + Remove all under the image -->
+        <div class="row" style="margin-top:8px;justify-content:flex-end">
+          <button class="btn" id="undoBtn">↩ واگرد</button>
+          <button class="btn" id="clearBtn">🗑️ حذف همه</button>
         </div>
-        <div class="row" style="justify-content:space-between;margin-top:8px">
-          <button class="btn" id="prevBtn">◀ قبلی</button>
-          <div>
-            <button class="btn" id="addBtn">➕ افزودن</button>
-            <button class="btn" id="nextBtn">بعدی ▶</button>
+      </div>
+
+      <!-- Outside-the-frame controls -->
+      <div class="controls">
+
+        <!-- Label above selection -->
+        <div id="selLabel" class="label">انتخاب پارچه 1</div>
+
+        <!-- Selection frame: thumbnail + buttons on SAME line -->
+        <div class="selectFrame">
+          <img id="fabMini" alt="" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);object-fit:cover;background:#0f172a;visibility:hidden">
+          <div class="rightline" style="margin-inline-start:auto">
+            <label class="btn">آپلود پارچه<input id="fabFile" type="file" accept="image/*" hidden></label>
+            <label class="btn">دوربین<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
           </div>
+        </div>
+
+        <!-- Add Fabric (disabled until current selection done) -->
+        <div class="rightline">
+          <button class="btn" id="addBtn" disabled>➕ افزودن</button>
+        </div>
+
+        <!-- Generate + Quality toggle (adjacent at right) -->
+        <div class="rightline">
+          <div class="toggle" id="qToggle">
+            <button class="active" data-q="standard">کیفیت معمولی</button>
+            <button data-q="high">کیفیت بالا</button>
+          </div>
+          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
         </div>
       </div>
     </section>
@@ -87,74 +131,152 @@
 </div>
 
 <script>
-  const photoFile = document.getElementById('photoFile');
-  const photoCam  = document.getElementById('photoCam');
-  const baseImg   = document.getElementById('baseImg');
-  const baseImg2  = document.getElementById('baseImg2');
-  const canvas    = document.getElementById('canvas');
-  const canvas2   = document.getElementById('canvas2');
-  const stepUpload= document.getElementById('step-upload');
-  const stepFabs  = document.getElementById('step-fabrics');
+  // Hamburger toggle
+  const hambtn=document.getElementById('hambtn');
+  const menu=document.getElementById('menu');
+  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
+  document.addEventListener('click', (e)=>{
+    if(!menu.contains(e.target) && e.target!==hambtn){ menu.classList.remove('show'); }
+  });
 
-  const fabFile   = document.getElementById('fabFile');
-  const qToggle   = document.getElementById('qToggle');
-  const previewBtn= document.getElementById('previewBtn');
-  const wizTitle  = document.getElementById('wizTitle');
-  const sum       = document.getElementById('sum');
-  const prevBtn   = document.getElementById('prevBtn');
-  const nextBtn   = document.getElementById('nextBtn');
-  const addBtn    = document.getElementById('addBtn');
+  // Elements
+  const stepUpload=document.getElementById('step-upload');
+  const stepFabs=document.getElementById('step-fabrics');
+  const photoFile=document.getElementById('photoFile');
+  const photoCam=document.getElementById('photoCam');
+  const baseImg=document.getElementById('baseImg');
+  const baseImg2=document.getElementById('baseImg2');
+  const goNext=document.getElementById('goNext');
 
-  let photoReady=false;
+  const tagFrame=document.getElementById('tagFrame');
+  const prevBtn=document.getElementById('prevBtn');
+  const nextBtn=document.getElementById('nextBtn');
+  const undoBtn=document.getElementById('undoBtn');
+  const clearBtn=document.getElementById('clearBtn');
+
+  const fabFile=document.getElementById('fabFile');
+  const fabCam=document.getElementById('fabCam');
+  const addBtn=document.getElementById('addBtn');
+  const qToggle=document.getElementById('qToggle');
+  const previewBtn=document.getElementById('previewBtn');
+  const fabMini=document.getElementById('fabMini');
+  const selLabel=document.getElementById('selLabel');
+
+  // State
   let fabrics=[]; // {id,url,quality:'standard',tags:[{x,y}]}
   let i=0;
+  let photoOk=false;
+  let baseObjectURL=null; // keep around so we don't revoke too early
 
-  function loadImage(el,file){ const url=URL.createObjectURL(file); el.src=url; el.onload=()=>URL.revokeObjectURL(url); }
-  function switchToFabs(){ stepUpload.classList.remove('active'); stepFabs.classList.add('active'); baseImg2.src=baseImg.src; updateUI(); }
-  function updateUI(){prevBtn.disabled = (i<=0);
-    nextBtn.disabled = (i>=fabrics.length-1);
-    addBtn.disabled  = (fabrics.length>=3);
-    wizTitle.textContent = `پارچه ${i+1} از ${fabrics.length}`;
-    previewBtn.disabled = (fabrics[i]?.tags.length===0);
+  // Load base image WITHOUT early revoke (fix mobile bug)
+  function loadBase(file){
+    if(baseObjectURL){ URL.revokeObjectURL(baseObjectURL); baseObjectURL=null; }
+    baseObjectURL = URL.createObjectURL(file);
+    baseImg.src = baseObjectURL;
   }
 
-  function addOverlayAt(container, x, y, url){
-    const ov=document.createElement('div'); ov.className='overlay'; ov.style.left=(x*100)+'%'; ov.style.top=(y*100)+'%'; ov.style.backgroundImage=`url(${url})`;
-    const tag=document.createElement('div'); tag.className='tag'; tag.style.left=(x*100)+'%'; tag.style.top=(y*100)+'%'; tag.textContent=String(container.querySelectorAll('.tag').length+1);
-    container.appendChild(ov); container.appendChild(tag);
+  // Load fabric image
+  function setFabricFromFile(file){
+    const url=URL.createObjectURL(file);
+    fabrics[i].url=url;
+    fabMini.src=url;
+    fabMini.style.visibility='visible';
+    redraw(); updateUI();
+  }
+
+  function toFabs(){
+    stepUpload.classList.remove('active'); 
+    stepFabs.classList.add('active'); 
+    baseImg2.src = baseObjectURL || baseImg.src; // ensure visible on mobile
+    ensureFirstFabric(); 
+    updateUI();
+  }
+  function toUpload(){ stepFabs.classList.remove('active'); stepUpload.classList.add('active'); }
+
+  function ensureFirstFabric(){ if(fabrics.length===0){ fabrics.push({id:0,url:'',quality:'standard',tags:[]}); i=0; } }
+
+  function selectionDone(cur){ return !!cur && !!cur.url && cur.tags.length>0; } // fabric chosen + ≥1 tag
+
+  function updateUI(){
+    const cur=fabrics[i];
+    prevBtn.disabled=false;
+    nextBtn.disabled=(i>=fabrics.length-1);
+    addBtn.disabled = !selectionDone(cur) || fabrics.length>=3; // (1) requirement
+    previewBtn.disabled = !(cur && cur.tags.length>0);
+    selLabel.textContent = `انتخاب پارچه ${i+1}`; // (2) requirement
+    if(cur && cur.url){ fabMini.src=cur.url; fabMini.style.visibility='visible'; }
+    else { fabMini.style.visibility='hidden'; }
+  }
+
+  function addOverlay(x,y,url){
+    const d=document.createElement('div');
+    d.className='overlay';
+    d.style.left=(x*100)+'%';
+    d.style.top=(y*100)+'%';
+    d.style.backgroundImage=`url(${url})`;
+    tagFrame.appendChild(d);
   }
   function redraw(){
-    canvas2.querySelectorAll('.overlay,.tag').forEach(n=>n.remove());
-    fabrics.forEach((f,fi)=>{ f.tags.forEach(t=> addOverlayAt(canvas2, t.x,t.y,f.url)); });
+    tagFrame.querySelectorAll('.overlay').forEach(n=>n.remove());
+    fabrics.forEach(f=> f.tags.forEach(t=> addOverlay(t.x,t.y,f.url)) );
   }
 
-  photoFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; photoReady=true; loadImage(baseImg,f); switchToFabs(); });
+  // Upload base
+  photoFile.addEventListener('change', e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    photoOk=true;
+    loadBase(f);
+    goNext.disabled=true;
+    baseImg.onload = ()=>{ goNext.disabled=false; };
+  });
   photoCam.addEventListener('change', ()=>photoFile.dispatchEvent(new Event('change')));
+  goNext.addEventListener('click', ()=>{ if(photoOk) toFabs(); });
 
-  fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; const url=URL.createObjectURL(f); fabrics[i].url=url; redraw(); updateUI(); });
-  qToggle.addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return; [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b)); fabrics[i].quality=b.dataset.q; });
+  // Prev/Next
+  prevBtn.addEventListener('click', ()=>{ if(i>0){ i--; updateUI(); } else { toUpload(); } });
+  nextBtn.addEventListener('click', ()=>{ if(i<fabrics.length-1){ i++; updateUI(); } });
 
-  canvas2.addEventListener('click', e=>{
-    if(!fabrics[i] || !fabrics[i].url) return; // require current fabric image
-    const r=canvas2.getBoundingClientRect(); const x=(e.clientX-r.left)/r.width; const y=(e.clientY-r.top)/r.height;
-    fabrics[i].tags.push({x,y}); addOverlayAt(canvas2,x,y,fabrics[i].url); updateUI();
+  // Fabric image selection
+  fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+  fabCam .addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+
+  // Add fabric
+  addBtn.addEventListener('click', ()=>{
+    if(addBtn.disabled) return;
+    fabrics.push({id:fabrics.length,url:'',quality:'standard',tags:[]});
+    i=fabrics.length-1;
+    updateUI();
   });
 
-  prevBtn.addEventListener('click', ()=>{ if(i>0){i--; updateUI();} });
-  nextBtn.addEventListener('click', ()=>{ if(i<fabrics.length-1){i++; updateUI();} });
-  addBtn.addEventListener('click', ()=>{ if(fabrics.length>=3) return; fabrics.push({id:fabrics.length,url:'',quality:'standard',tags:[]}); i=fabrics.length-1; updateUI(); });
-
-  // init first fabric only after photo uploaded
-  stepFabs.addEventListener('transitionend', ()=>{});
-  stepUpload.addEventListener('click', e=>{});
-
-  // create first fabric once photo is uploaded
-  const obs=new MutationObserver(()=>{
-    if(stepFabs.classList.contains('active') && fabrics.length===0){ fabrics.push({id:0,url:'',quality:'standard',tags:[]}); i=0; updateUI(); }
+  // Quality toggle + Generate
+  qToggle.addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b||!fabrics[i]) return;
+    [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+    fabrics[i].quality=b.dataset.q;
   });
-  obs.observe(stepFabs,{attributes:true});
+  previewBtn.addEventListener('click', ()=>{
+    alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`);
+  });
 
-  previewBtn.addEventListener('click', ()=>{ alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`); });
+  // Tagging
+  tagFrame.addEventListener('click', e=>{
+    if(!fabrics[i] || !fabrics[i].url) return;
+    const r=tagFrame.getBoundingClientRect();
+    const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+    fabrics[i].tags.push({x,y});
+    addOverlay(x,y,fabrics[i].url);
+    updateUI();
+  });
+
+  // Undo / Remove all
+  undoBtn.addEventListener('click', ()=>{
+    if(!fabrics[i] || fabrics[i].tags.length===0) return;
+    fabrics[i].tags.pop(); redraw(); updateUI();
+  });
+  clearBtn.addEventListener('click', ()=>{
+    if(!fabrics[i]) return;
+    fabrics[i].tags=[]; redraw(); updateUI();
+  });
 </script>
 </body>
 </html>
