@@ -3,12 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>پیشنما — مبل (ویزارد بدون اسکرول)</title>
+<title>پیشنما — مبل (نسخه پچ)</title>
 <style>
   :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
   html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
   .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
-  /* Top bar with hamburger */
   .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
   .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
   .menu{position:absolute;top:48px;right:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
@@ -34,29 +33,17 @@
   .section{display:none;flex:1;overflow:hidden}
   .section.active{display:flex;flex-direction:column}
   .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px;flex:1}
-  .rightline{display:flex;justify-content:flex-start} /* RTL: start = right */
+  .rightline{display:flex;justify-content:flex-start;align-items:center}
   .between{display:flex;justify-content:space-between;align-items:center}
-
-  /* __AI_PATCH__: Fixed-size preview frames + contain scaling */
-  #sofaThumb,
-  #frame .thumb {
-    height: 220px !important;
-    width: 100%;
-  }
-
-  /* Wizard nav row placed ABOVE the frame */
+  #sofaThumb, #frame .thumb { height: 220px !important; width: 100%; }
   #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
-
-  /* New spacing label above tags */
   .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
-
 </style>
-
 </head>
 <body>
 <div class="wrap">
   <div class="bar">
-    <button class="hamburger" id="hambtn">☰ منو</button>
+    <button class="hamburger" id="hambtn">☰</button>
     <div class="menu" id="menu">
       <a href="sofa.html">🛋️ طراحی مبل</a>
       <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
@@ -64,7 +51,6 @@
   </div>
 
   <div class="viewport">
-    <!-- STEP 1: Sofa upload -->
     <section id="step-upload" class="section active">
       <div class="card">
         <h3 style="margin:0 0 8px">📷 آپلود مبل</h3>
@@ -73,10 +59,10 @@
       <div class="controls">
         <div class="row between">
           <div class="row">
-            <label class="btn">انتخاب فایل
+            <label class="btn" title="انتخاب فایل">📁
               <input id="sofaFile" type="file" accept="image/*" hidden>
             </label>
-            <label class="btn">دوربین
+            <label class="btn" title="دوربین">📷
               <input id="sofaCam" type="file" accept="image/*" capture="environment" hidden>
             </label>
           </div>
@@ -85,10 +71,7 @@
       </div>
     </section>
 
-    <!-- STEP 2: Fabric wizard -->
     <section id="step-fabrics" class="section">
-      
-      <!-- NEXT leftmost, PREV rightmost, above the frame -->
       <div class="row" id="navRow">
         <button class="btn" id="prevStep">قبلی ▶</button>
         <button class="btn" id="nextBtn">◀ بعدی</button>
@@ -97,22 +80,19 @@
       <div class="card" id="frame">
         <div class="thumb">
           <span class="badge" id="wizBadge">پارچه 1 از 1</span>
+          <span id="fabPlaceholder" style="position:absolute;color:var(--muted);font-size:.95rem">پارچه اول را انتخاب کنید</span>
           <img id="fabImg" alt="">
         </div>
 
-        <!-- Fabric selection buttons INSIDE frame -->
-        <div class="rightline" style="margin-top:10px; margin-bottom:8px">
-          <div class="row">
-            <label class="btn">آپلود پارچه
-              <input id="fabFile" type="file" accept="image/*" hidden>
-            </label>
-            <label class="btn">دوربین
-              <input id="fabCam" type="file" accept="image/*" capture="environment" hidden>
-            </label>
-          </div>
+        <div class="rightline" style="margin-top:10px; margin-bottom:8px; gap:8px">
+          <label class="btn" title="آپلود پارچه">📁
+            <input id="fabFile" type="file" accept="image/*" hidden>
+          </label>
+          <label class="btn" title="دوربین">📷
+            <input id="fabCam" type="file" accept="image/*" capture="environment" hidden>
+          </label>
         </div>
 
-        <!-- Label + part tags INSIDE frame -->
         <div class="tagsHeader">بخش مربوطه</div>
         <div class="schem" id="schem">
           <button class="part" data-part="back">پشتی</button>
@@ -123,13 +103,11 @@
       </div>
 
       <div class="controls">
-        <!-- Add Fabric stays here -->
         <div class="rightline">
-          <button class="btn" id="addBtn">➕ افزودن</button>
+          <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
         </div>
       </div>
 
-      <!-- Quality + Generate moved BELOW add button, right-aligned -->
       <div class="controls">
         <div class="rightline" style="gap:8px">
           <div class="toggle" id="qToggle">
@@ -139,12 +117,20 @@
           <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
         </div>
       </div>
-
     </section>
   </div>
 </div>
 
 <script>
+  // helpers
+  function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+
+  // Hamburger
+  const hambtn=document.getElementById('hambtn');
+  const menu=document.getElementById('menu');
+  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
+  document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show'); });
+
   // elements
   const sofaFile = document.getElementById('sofaFile');
   const sofaCam  = document.getElementById('sofaCam');
@@ -163,7 +149,6 @@
   const addBtn   = document.getElementById('addBtn');
   const nextBtn  = document.getElementById('nextBtn');
   const prevStep = document.getElementById('prevStep');
-
   const parts = ['back','seat','arms'];
 
   // state
@@ -172,7 +157,6 @@
   let assigned = {back:null, seat:null, arms:null};
   let idx = 0;
 
-  // helpers
   function loadImage(el,file){ const url=URL.createObjectURL(file); el.src=url; el.onload=()=>URL.revokeObjectURL(url); }
   function gotoUpload(){ stepFabrics.classList.remove('active'); stepUpload.classList.add('active'); }
   function gotoFabrics(){ stepUpload.classList.remove('active'); stepFabrics.classList.add('active'); updateUI(); }
@@ -181,11 +165,12 @@
     if(!fabrics[idx]) return;
     const cur = fabrics[idx];
 
-    // bind preview + badge to current step
     fabImg.src = cur.url || '';
     wizBadge.textContent = `پارچه ${idx+1} از ${fabrics.length}`;
 
-    // parts UI
+    const ph = document.getElementById('fabPlaceholder');
+    if(cur.url){ ph.style.display='none'; } else { ph.textContent = `پارچه ${faOrdinal(idx+1)} را انتخاب کنید`; ph.style.display='block'; }
+
     schem.querySelectorAll('.part').forEach(btn=>{
       const p = btn.dataset.part;
       if(p==='all'){
@@ -199,29 +184,24 @@
       }
     });
 
-    // preview enabled only if this fabric has parts
     previewBtn.disabled = (cur.parts.size===0);
 
-    // Add disabled until current fabric has an image AND ≥1 part; also disabled if all parts taken or current has all 3 or ≥3 fabrics
+    const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+    addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
+
     const allAssignedOverall = parts.every(p=>assigned[p]!==null);
     const curAll = (cur.parts.size===3);
     const currentReady = !!cur.url && cur.parts.size>0;
     addBtn.disabled = (fabrics.length>=3) || allAssignedOverall || curAll || !currentReady;
 
-    // Next: show only when there IS a next step
+    // Next: visible always, disabled if no next
     const hasNext = idx < fabrics.length-1;
-    nextBtn.style.display = hasNext ? 'inline-block' : 'none';
+    nextBtn.style.display = 'inline-block';
+    nextBtn.disabled = !hasNext;
   }
 
-  // navigation
-  prevStep.addEventListener('click', ()=>{
-    if(idx>0){ idx--; updateUI(); }
-    else { gotoUpload(); }
-  });
-
-  nextBtn.addEventListener('click', ()=>{
-    if(idx < fabrics.length-1){ idx++; updateUI(); }
-  });
+  prevStep.addEventListener('click', ()=>{ if(idx>0){ idx--; updateUI(); } else { gotoUpload(); }});
+  nextBtn.addEventListener('click', ()=>{ if(idx < fabrics.length-1){ idx++; updateUI(); }});
 
   addBtn.addEventListener('click', ()=>{
     if(addBtn.disabled) return;
@@ -231,7 +211,6 @@
     updateUI();
   });
 
-  // upload step events
   sofaFile.addEventListener('change', e=>{
     const f = e.target.files?.[0]; if(!f) return;
     sofaChosen = true;
@@ -242,13 +221,8 @@
     idx = 0;
   });
   sofaCam.addEventListener('change', ()=>sofaFile.dispatchEvent(new Event('change')));
+  toFabricsBtn.addEventListener('click', ()=>{ if(!sofaChosen) return; gotoFabrics(); });
 
-  toFabricsBtn.addEventListener('click', ()=>{
-    if(!sofaChosen) return;
-    gotoFabrics();
-  });
-
-  // fabric image selection
   function setFabricFromFile(file){
     const url = URL.createObjectURL(file);
     fabrics[idx].url = url;
@@ -258,14 +232,12 @@
   fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
   fabCam .addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
 
-  // quality toggle
   qToggle.addEventListener('click', e=>{
     const b=e.target.closest('button'); if(!b || !fabrics[idx]) return;
     [...qToggle.children].forEach(x=>x.classList.toggle('active', x===b));
     fabrics[idx].quality = b.dataset.q;
   });
 
-  // part selection (incl. ALL)
   schem.addEventListener('click', e=>{
     const btn = e.target.closest('.part'); if(!btn || !fabrics[idx]) return;
     const p = btn.dataset.part;
@@ -288,18 +260,9 @@
     updateUI();
   });
 
-  // preview (UI only)
   previewBtn.addEventListener('click', ()=>{
     const q = fabrics[idx].quality || 'standard';
     alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
-  });
-
-  // Hamburger toggle
-  const hambtn=document.getElementById('hambtn');
-  const menu=document.getElementById('menu');
-  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
-  document.addEventListener('click', (e)=>{
-    if(!menu.contains(e.target) && e.target!==hambtn){ menu.classList.remove('show'); }
   });
 </script>
 </body>
