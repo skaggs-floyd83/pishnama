@@ -1,0 +1,354 @@
+<!doctype html>
+<!--
+  Project: Pishnama — Sofa Fabric Assignment (Developer-Commented Copy)
+  File: sofa_commented_dev.html
+  Purpose:
+    Two-stage flow to upload a sofa image and assign up to THREE fabrics to specific parts
+    of the sofa (back/seat/arms). Uses pure HTML/CSS/vanilla JS. No network calls here.
+
+  Key UX decisions (preserve behavior exactly):
+    • Hamburger is icon-only (☰). Menu contains links to sofa & pillows pages.
+    • File selection buttons are icon-only (📁 for choose file, 📷 for camera).
+    • Stages:
+        1) Upload: user selects base sofa image; "Continue" becomes enabled after image loads.
+        2) Fabrics: user iterates through per-fabric context and assigns fabric to parts.
+    • Up to 3 fabrics are supported. The "Add Fabric" button:
+        – Shows “➕ افزودن پارچه {دوم|سوم}” (dynamic ordinal)
+        – Is completely HIDDEN when three fabrics already exist (NOT disabled).
+    • Placeholder text “پارچه {اول|دوم|سوم} را انتخاب کنید” appears inside the preview
+      until the current fabric image is set.
+    • “بخش مربوطه” (part grid) controls assignment; a fabric can own any subset of parts.
+      Visibility rules prevent conflicting assignments across fabrics.
+    • “Next” is always rendered (visible) but disabled when there is no next fabric.
+    • “Preview” enables only when at least one part is selected for the current fabric.
+  Notes for future devs:
+    • Blob URLs (createObjectURL) are used for local previews; revoke on <img> load where applicable.
+    • This page is self-contained UI only; model integration should be added where Preview is handled.
+-->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>پیشنما — مبل (v3, commented)</title>
+<style>
+  :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
+  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  /* Icon-only hamburger; text "منو" intentionally removed */
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
+  .row{display:flex;align-items:center;gap:8px}
+  .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
+  .btn.primary{background:var(--blue);border-color:var(--blue)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  /* Generic image frame for previews/placeholders */
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
+  .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+  .badge{position:absolute;top:8px;right:8px;background:#0f1a33;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.85rem;color:#e5e7eb}
+
+  /* Quality toggle (two-state) */
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
+  .toggle .active{background:#0f1a33;color:#fff}
+
+  /* Part grid “بخش مربوطه”: back/seat/arms/all */
+  .schem{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px}
+  .part{height:54px;border:1px solid var(--border);border-radius:10px;background:#0f1a33;display:grid;place-items:center}
+  .part.active{background:#0e3a2b;border-color:#0e3a2b}
+
+  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .section{display:none;flex:1;overflow:hidden}
+  .section.active{display:flex;flex-direction:column}
+
+  .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px;flex:1}
+  .rightline{display:flex;justify-content:flex-start;align-items:center}
+  .between{display:flex;justify-content:space-between;align-items:center}
+
+  /* Fixed heights used in mobile-safe viewport */
+  #sofaThumb, #frame .thumb { height: 220px !important; width: 100%; }
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+  .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- Header: hamburger only -->
+  <div class="bar">
+    <button class="hamburger" id="hambtn">☰</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
+  </div>
+
+  <div class="viewport">
+    <!-- ===== Stage 1: Upload base sofa image ===== -->
+    <section id="step-upload" class="section active">
+      <div class="card">
+        <h3 style="margin:0 0 8px">📷 آپلود مبل</h3>
+        <div class="thumb" id="sofaThumb"><span class="hint">هنوز تصویری انتخاب نشده</span></div>
+      </div>
+      <div class="controls">
+        <div class="row between">
+          <!-- Icon-only file/camera per product decision -->
+          <div class="row">
+            <label class="btn" title="انتخاب فایل">📁<input id="sofaFile" type="file" accept="image/*" hidden></label>
+            <label class="btn" title="دوربین">📷<input id="sofaCam" type="file" accept="image/*" capture="environment" hidden></label>
+          </div>
+          <!-- Continue becomes enabled only after the image loads -->
+          <button class="btn primary" id="toFabricsBtn" disabled>ادامه ◀</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Stage 2: Fabric selection + part assignment ===== -->
+    <section id="step-fabrics" class="section">
+      <!-- Navigation row: “Prev” always goes back to stage 1 if idx==0; “Next” is visible but disabled if no next -->
+      <div class="row" id="navRow">
+        <button class="btn" id="prevStep">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
+
+      <div class="card" id="frame">
+        <!-- Preview frame: shows fabric image or ordinal placeholder until set -->
+        <div class="thumb">
+          <span class="badge" id="wizBadge">پارچه 1 از 1</span>
+          <span id="fabPlaceholder" style="position:absolute;color:var(--muted);font-size:.95rem">پارچه اول را انتخاب کنید</span>
+          <img id="fabImg" alt="">
+        </div>
+
+        <!-- Fabric file/camera selectors (icon-only) -->
+        <div class="rightline" style="margin-top:10px; margin-bottom:8px; gap:8px">
+          <label class="btn" title="آپلود پارچه">📁<input id="fabFile" type="file" accept="image/*" hidden></label>
+          <label class="btn" title="دوربین">📷<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
+        </div>
+
+        <!-- Part selection block -->
+        <div class="tagsHeader">بخش مربوطه</div>
+        <div class="schem" id="schem">
+          <button class="part" data-part="back">پشتی</button>
+          <button class="part" data-part="seat">نشیمن</button>
+          <button class="part" data-part="arms">دسته‌ها</button>
+          <button class="part" data-part="all">همه</button>
+        </div>
+      </div>
+
+      <!-- Add Fabric: HIDDEN when fabrics.length >= 3; otherwise enabled based on selection readiness -->
+      <div class="controls">
+        <div class="rightline">
+          <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
+        </div>
+      </div>
+
+      <!-- Generate row: quality toggle + preview (integration point for the model) -->
+      <div class="controls">
+        <div class="rightline" style="gap:8px">
+          <div class="toggle" id="qToggle">
+            <button class="active" data-q="standard">کیفیت معمولی</button>
+            <button data-q="high">کیفیت بالا</button>
+          </div>
+          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+  /* ---------- Utilities & State ---------- */
+
+  // Maps 1..3 to Persian ordinals: اول / دوم / سوم
+  function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+
+  // Hamburger toggling (click outside to close)
+  const hambtn=document.getElementById('hambtn');
+  const menu=document.getElementById('menu');
+  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
+  document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show'); });
+
+  // Stage 1 elements
+  const sofaFile=document.getElementById('sofaFile');
+  const sofaCam=document.getElementById('sofaCam');
+  const sofaThumb=document.getElementById('sofaThumb');
+  const toFabricsBtn=document.getElementById('toFabricsBtn');
+  const stepUpload=document.getElementById('step-upload');
+
+  // Stage 2 elements
+  const stepFabrics=document.getElementById('step-fabrics');
+  const fabFile=document.getElementById('fabFile');
+  const fabCam=document.getElementById('fabCam');
+  const fabImg=document.getElementById('fabImg');
+  const wizBadge=document.getElementById('wizBadge');
+  const qToggle=document.getElementById('qToggle');
+  const schem=document.getElementById('schem');
+  const previewBtn=document.getElementById('previewBtn');
+  const addBtn=document.getElementById('addBtn');
+  const nextBtn=document.getElementById('nextBtn');
+  const prevStep=document.getElementById('prevStep');
+
+  // Logical part names; used for visibility rules and assignments
+  const parts=['back','seat','arms'];
+
+  // Global UI state (no persistence): fabrics[] store image URL + assigned parts
+  let sofaChosen=false; // becomes true after an image is picked
+  let fabrics=[];       // each item: { id:number, url:string, quality:'standard'|'high', parts:Set<string> }
+  let assigned={back:null,seat:null,arms:null}; // which fabric id currently owns each part (or null)
+  let idx=0;            // index of "current" fabric being edited
+
+  // Helper: set <img>.src with a Blob URL; revoke URL after load to avoid leaks
+  function loadImage(el,file){
+    const url=URL.createObjectURL(file);
+    el.src=url;
+    el.onload=()=>URL.revokeObjectURL(url);
+  }
+
+  // Stage navigation
+  function gotoUpload(){ stepFabrics.classList.remove('active'); stepUpload.classList.add('active'); }
+  function gotoFabrics(){ stepUpload.classList.remove('active'); stepFabrics.classList.add('active'); updateUI(); }
+
+  /* ---------- Core UI sync (Stage 2) ----------
+     Responsibilities:
+       1) Update preview image + placeholder text
+       2) Update part grid visibility/active states under conflicting assignments
+       3) Manage “Add Fabric” (show/hide + label + enabled state)
+       4) Keep “Next” visible but disabled if there is no next fabric
+       5) Enable Preview only when some part(s) are assigned for current fabric
+  ------------------------------------------------ */
+  function updateUI(){
+    if(!fabrics[idx]) return;
+    const cur=fabrics[idx];
+
+    // 1) Preview (image or ordinal placeholder)
+    fabImg.src=cur.url||'';
+    const ph=document.getElementById('fabPlaceholder');
+    if(cur.url){ ph.style.display='none'; }
+    else { ph.textContent=`پارچه ${faOrdinal(idx+1)} را انتخاب کنید`; ph.style.display='block'; }
+
+    // Wizard badge: "پارچه X از N"
+    wizBadge.textContent=`پارچه ${idx+1} از ${fabrics.length}`;
+
+    // 2) Part grid visibility & active states
+    schem.querySelectorAll('.part').forEach(btn=>{
+      const p=btn.dataset.part;
+      if(p==='all'){
+        const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
+        btn.style.visibility=allAvail?'visible':'hidden';
+        btn.classList.toggle('active',cur.parts.size===3);
+      }else{
+        const visible=(assigned[p]===null||assigned[p]===cur.id);
+        btn.style.visibility=visible?'visible':'hidden';
+        btn.classList.toggle('active',cur.parts.has(p));
+      }
+    });
+
+    // 5) Preview gating: at least one part must be selected for the current fabric
+    previewBtn.disabled=(cur.parts.size===0);
+
+    // 3) Add Fabric management:
+    //    • Hidden if THREE fabrics already exist.
+    //    • Otherwise, label reflects NEXT ordinal (دوم or سوم).
+    //    • Enabled only when current fabric is "ready" (has image and >=1 part selected).
+    if(fabrics.length>=3){
+      addBtn.style.display='none';
+    }else{
+      addBtn.style.display='inline-block';
+      const nextOrdinal=faOrdinal(Math.min(fabrics.length+1,3));
+      addBtn.textContent=`➕ افزودن پارچه ${nextOrdinal}`;
+
+      const allAssignedOverall=parts.every(p=>assigned[p]!==null);
+      const curAll=(cur.parts.size===3);
+      const currentReady=!!cur.url && cur.parts.size>0;
+      addBtn.disabled=allAssignedOverall||curAll||!currentReady;
+    }
+
+    // 4) Next button: always present; disabled if there is no next fabric
+    nextBtn.style.display='inline-block';
+    nextBtn.disabled = !(idx < fabrics.length-1);
+  }
+
+  /* ---------- Event wiring ---------- */
+
+  // Stage navigation: Prev from the first fabric returns to upload
+  prevStep.addEventListener('click', ()=>{ if(idx>0){ idx--; updateUI(); } else { gotoUpload(); }});
+  nextBtn.addEventListener('click', ()=>{ if(idx<fabrics.length-1){ idx++; updateUI(); }});
+
+  // Add a new fabric slot (up to 3). Starts empty (no image, no parts).
+  addBtn.addEventListener('click', ()=>{
+    if(addBtn.disabled) return;
+    fabrics.push({id:fabrics.length,url:'',quality:'standard',parts:new Set()});
+    idx=fabrics.length-1;
+    updateUI();
+  });
+
+  // Stage 1: selecting the base sofa image enables Continue after load
+  sofaFile.addEventListener('change', e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    sofaChosen=true;
+    toFabricsBtn.disabled=false;
+    sofaThumb.innerHTML='<img>';
+    loadImage(sofaThumb.firstElementChild,f);
+    if(fabrics.length===0) fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    idx=0;
+  });
+  // Camera mirrors file selection
+  sofaCam.addEventListener('change', ()=>sofaFile.dispatchEvent(new Event('change')));
+  toFabricsBtn.addEventListener('click', ()=>{ if(!sofaChosen) return; gotoFabrics(); });
+
+  // Fabric image selection for current fabric idx
+  function setFabricFromFile(file){
+    const url=URL.createObjectURL(file);
+    fabrics[idx].url=url;
+    fabImg.src=url;
+    updateUI();
+  }
+  fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+  fabCam .addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+
+  // Quality toggle: per-fabric (standard/high) — UI only
+  qToggle.addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b||!fabrics[idx]) return;
+    [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+    fabrics[idx].quality=b.dataset.q;
+  });
+
+  // Part assignment rules:
+  //  • Clicking “all” toggles owning all 3 parts (if no conflict).
+  //  • Clicking individual part toggles ownership by current fabric.
+  //  • A part cannot be owned by two different fabrics simultaneously.
+  schem.addEventListener('click', e=>{
+    const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
+    const p=btn.dataset.part;
+    const cur=fabrics[idx];
+
+    if(p==='all'){
+      const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
+      if(!allAvail) return;
+      const turnOn=(cur.parts.size!==3);
+      parts.forEach(pa=>{
+        if(turnOn){ cur.parts.add(pa); assigned[pa]=cur.id; }
+        else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
+      });
+    }else{
+      const visible=(assigned[p]===null||assigned[p]===cur.id);
+      if(!visible) return;
+      if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
+      else { cur.parts.add(p); assigned[p]=cur.id; }
+    }
+    updateUI();
+  });
+
+  // Placeholder preview “Preview” integration point
+  previewBtn.addEventListener('click', ()=>{
+    const q=fabrics[idx].quality||'standard';
+    alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
+  });
+</script>
+</body>
+</html>

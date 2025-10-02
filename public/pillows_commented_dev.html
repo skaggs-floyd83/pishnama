@@ -1,0 +1,334 @@
+<!doctype html>
+<!--
+  Project: Pishnama — Pillows Fabric Tagging (Developer-Commented Copy)
+  File: pillows_commented_dev.html
+  Purpose:
+    Two-stage flow to upload a sofa+pillows image, then tag pillow locations per fabric
+    and generate previews using up to THREE fabrics. Pure HTML/CSS/vanilla JS. No network calls here.
+
+  Key UX decisions (preserve behavior exactly):
+    • Hamburger is icon-only (☰). Menu links to sofa & pillows pages.
+    • File selection buttons are icon-only (📁 for choose file, 📷 for camera).
+    • Stages:
+        1) Upload: user selects base photo; Continue enabled after image loads.
+        2) Fabrics: fabric-specific tagging — each fabric has its own set of tag points.
+    • Overlay tags are fabric swatch squares (NO numbers/circles), positioned absolutely with normalized coords.
+    • Selection frame:
+        – Title “انتخاب پارچه {اول|دوم|سوم}” gets its own line (top-right).
+        – Buttons (file/camera) are on the next line, right-aligned; thumbnail sits at the left.
+    • Add Fabric button:
+        – Label updates to next ordinal (دوم / سوم).
+        – Completely HIDDEN when three fabrics already exist (not disabled).
+        – Enabled only when current fabric has an image AND at least one tag point.
+    • Undo (↩) removes the last tag of the CURRENT fabric only; Clear (🗑️) removes all tags of current fabric.
+    • Mobile persistence: base image Blob URL is carried from stage 1 to stage 2 to ensure visibility after step change.
+-->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>پیشنما — کوسن‌ها (v3, commented)</title>
+<style>
+  :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
+  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  /* Icon-only hamburger */
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:#0f162b;border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
+  .row{display:flex;align-items:center;gap:8px}
+  .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
+  .btn.primary{background:var(--blue);border-color:var(--blue)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
+  .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
+  .toggle .active{background:#0f1a33;color:#fff}
+
+  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .section{display:none;flex:1;overflow:hidden}
+  .section.active{display:flex;flex-direction:column}
+
+  #baseFrame, #tagFrame { height: 220px !important; width: 100%; }
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+  .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px}
+  .rightline{display:flex;justify-content:flex-start;align-items:center;gap:8px}
+  .between{display:flex;justify-content:space-between;align-items:center}
+
+  /* Selection frame with two rows: (1) title line, (2) buttons+thumb line */
+  .selectFrame{border:1px dashed var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;flex-direction:column;gap:10px;position:relative}
+
+  /* Fabric-tag overlays: 16×16 swatches; background image = fabric */
+  .overlay{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;border:1px solid var(--accent);background-size:cover;background-position:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- Header: hamburger only -->
+  <div class="bar">
+    <button class="hamburger" id="hambtn">☰</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
+  </div>
+
+  <div class="viewport">
+    <!-- ===== Stage 1: Upload sofa + pillows image ===== -->
+    <section id="step-upload" class="section active">
+      <div class="card">
+        <h3 style="margin:0 0 8px">📷 آپلود تصویر مبل + کوسن‌ها</h3>
+        <div class="thumb" id="baseFrame"><!-- Keep base image visible after Next (mobile) --><img id="baseImg" alt=""></div>
+        <div class="row between" style="margin-top:8px">
+          <!-- Match sofa page layout: file+camera (right), Continue (left) -->
+          <div class="row">
+            <label class="btn" title="انتخاب فایل">📁<input id="photoFile" type="file" accept="image/*" hidden></label>
+            <label class="btn" title="دوربین">📷<input id="photoCam" type="file" accept="image/*" capture="environment" hidden></label>
+          </div>
+          <button class="btn primary" id="goNext" disabled>ادامه ◀</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Stage 2: Tag pillows + choose fabrics ===== -->
+    <section id="step-fabrics" class="section">
+      <div class="row" id="navRow">
+        <button class="btn" id="prevBtn">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
+
+      <div class="card">
+        <!-- Icon-only controls centered above the image -->
+        <div class="row" style="justify-content:center;gap:8px;margin-bottom:8px">
+          <button class="btn" id="undoBtn" title="واگرد">↩</button>
+          <button class="btn" id="clearBtn" title="حذف همه">🗑️</button>
+        </div>
+        <!-- Tagging frame: overlays are small fabric swatches -->
+        <div class="thumb" id="tagFrame" style="position:relative"><img id="baseImg2" alt=""></div>
+      </div>
+
+      <!-- Fabric selection frame: title line + buttons/thumbnail line -->
+      <div class="controls">
+        <div class="selectFrame">
+          <div class="row" style="justify-content:flex-start;width:100%">
+            <strong id="selTitle" style="color:var(--muted);font-size:.95rem">انتخاب پارچه اول</strong>
+          </div>
+          <div class="row" style="justify-content:space-between;width:100%">
+            <div class="rightline">
+              <label class="btn" title="آپلود پارچه">📁<input id="fabFile" type="file" accept="image/*" hidden></label>
+              <label class="btn" title="دوربین">📷<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <img id="fabMini" alt="" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);object-fit:cover;background:#0f172a;visibility:hidden">
+          </div>
+        </div>
+
+        <!-- Add Fabric: HIDDEN at 3 fabrics. Enabled only when current fabric has image + ≥1 tag -->
+        <div class="rightline">
+          <button class="btn" id="addBtn" disabled>➕ افزودن پارچه دوم</button>
+        </div>
+
+        <!-- Quality & Preview (integration point) -->
+        <div class="rightline">
+          <div class="toggle" id="qToggle">
+            <button class="active" data-q="standard">کیفیت معمولی</button>
+            <button data-q="high">کیفیت بالا</button>
+          </div>
+          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+  /* ---------- Utilities & State ---------- */
+
+  // Persian ordinals for labels
+  function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+
+  // Hamburger toggle with outside-click close
+  const hambtn=document.getElementById('hambtn');
+  const menu=document.getElementById('menu');
+  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
+  document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show'); });
+
+  // Stage 1 elements
+  const stepUpload=document.getElementById('step-upload');
+  const stepFabs=document.getElementById('step-fabrics');
+  const photoFile=document.getElementById('photoFile');
+  const photoCam=document.getElementById('photoCam');
+  const baseImg=document.getElementById('baseImg');
+  const baseImg2=document.getElementById('baseImg2');
+  const goNext=document.getElementById('goNext');
+
+  // Stage 2 elements
+  const tagFrame=document.getElementById('tagFrame');
+  const prevBtn=document.getElementById('prevBtn');
+  const nextBtn=document.getElementById('nextBtn');
+  const undoBtn=document.getElementById('undoBtn');
+  const clearBtn=document.getElementById('clearBtn');
+  const fabFile=document.getElementById('fabFile');
+  const fabCam=document.getElementById('fabCam');
+  const addBtn=document.getElementById('addBtn');
+  const qToggle=document.getElementById('qToggle');
+  const previewBtn=document.getElementById('previewBtn');
+  const fabMini=document.getElementById('fabMini');
+
+  // Per-fabric state model:
+  //   fabrics[i] owns: url (image), quality flag, and its own list of tag points [{x,y}] in normalized coords (0..1)
+  let fabrics=[]; // each item: { id:number, url:string, quality:'standard'|'high', tags:Array<{x:number,y:number}> }
+  let i=0;        // current fabric index being edited
+  let photoOk=false;
+  let baseObjectURL=null; // persisted blob URL across steps (fixes mobile issue where image would disappear)
+
+  /* ---------- Helpers ---------- */
+
+  // Create & persist a blob URL for stage 1; do NOT revoke until replaced (we reuse it in stage 2)
+  function loadBase(file){
+    if(baseObjectURL){ URL.revokeObjectURL(baseObjectURL); baseObjectURL=null; }
+    baseObjectURL = URL.createObjectURL(file);
+    baseImg.src = baseObjectURL;
+  }
+
+  function setFabricFromFile(file){
+    const url=URL.createObjectURL(file);
+    fabrics[i].url=url;
+    fabMini.src=url;
+    fabMini.style.visibility='visible';
+    redraw(); updateUI();
+  }
+
+  function toFabs(){
+    stepUpload.classList.remove('active'); 
+    stepFabs.classList.add('active'); 
+    // keep same base image in stage 2
+    baseImg2.src = baseObjectURL || baseImg.src;
+    ensureFirstFabric(); 
+    updateUI();
+  }
+  function toUpload(){ stepFabs.classList.remove('active'); stepUpload.classList.add('active'); }
+  function ensureFirstFabric(){ if(fabrics.length===0){ fabrics.push({id:0,url:'',quality:'standard',tags:[]}); i=0; } }
+  function selectionDone(cur){ return !!cur && !!cur.url && cur.tags.length>0; }
+
+  /* ---------- Core UI sync ----------
+     Responsibilities:
+       1) Prev/Next enablement
+       2) Add Fabric: show/hide + label + enablement rules
+       3) Preview gating (needs ≥1 tag on current fabric)
+       4) Title ordinal updates and thumbnail visibility
+  ------------------------------------ */
+  function updateUI(){
+    const cur=fabrics[i];
+    prevBtn.disabled=false;
+    nextBtn.disabled=(i>=fabrics.length-1);
+
+    // Add Fabric: hide at THREE fabrics; else show with next ordinal; enabled only when current selection is done
+    if(fabrics.length>=3){
+      addBtn.style.display='none';
+    }else{
+      addBtn.style.display='inline-block';
+      addBtn.disabled = !selectionDone(cur);
+      const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+      addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
+    }
+
+    // Preview requires at least one tag on current fabric
+    previewBtn.disabled = !(cur && cur.tags.length>0);
+
+    // Title reflects current fabric’s ordinal
+    const selTitle = document.getElementById('selTitle');
+    if(selTitle) selTitle.textContent = `انتخاب پارچه ${faOrdinal(i+1)}`;
+
+    // Thumbnail mirrors current fabric image
+    if(cur && cur.url){ fabMini.src=cur.url; fabMini.style.visibility='visible'; }
+    else { fabMini.style.visibility='hidden'; }
+  }
+
+  /* ---------- Overlay rendering ---------- */
+
+  function addOverlay(x,y,url){
+    // Visual tag = 16px square carrying the fabric texture
+    const d=document.createElement('div');
+    d.className='overlay';
+    d.style.left=(x*100)+'%';
+    d.style.top=(y*100)+'%';
+    d.style.backgroundImage=`url(${url})`;
+    tagFrame.appendChild(d);
+  }
+
+  function redraw(){
+    tagFrame.querySelectorAll('.overlay').forEach(n=>n.remove());
+    fabrics.forEach(f=> f.tags.forEach(t=> addOverlay(t.x,t.y,f.url)) );
+  }
+
+  /* ---------- Event wiring ---------- */
+
+  // Stage 1 upload
+  photoFile.addEventListener('change', e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    photoOk=true;
+    loadBase(f);
+    goNext.disabled=true;
+    baseImg.onload = ()=>{ goNext.disabled=false; };
+  });
+  photoCam.addEventListener('change', ()=>photoFile.dispatchEvent(new Event('change')));
+  goNext.addEventListener('click', ()=>{ if(photoOk) toFabs(); });
+
+  // Prev/Next between fabrics; Prev from i==0 returns to stage 1
+  prevBtn.addEventListener('click', ()=>{ if(i>0){ i--; updateUI(); } else { toUpload(); } });
+  nextBtn.addEventListener('click', ()=>{ if(i<fabrics.length-1){ i++; updateUI(); } });
+
+  // Fabric asset selection for current fabric
+  fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+  fabCam .addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
+
+  // Add new fabric slot (up to 3)
+  addBtn.addEventListener('click', ()=>{
+    if(addBtn.disabled) return;
+    fabrics.push({id:fabrics.length,url:'',quality:'standard',tags:[]});
+    i=fabrics.length-1; updateUI();
+  });
+
+  // Quality toggle (per-fabric) — UI only
+  qToggle.addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b||!fabrics[i]) return;
+    [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+    fabrics[i].quality=b.dataset.q;
+  });
+
+  // Tagging: store NORMALIZED coords (0..1); overlays re-render from state
+  const tagFrameEl=document.getElementById('tagFrame');
+  tagFrameEl.addEventListener('click', e=>{
+    if(!fabrics[i] || !fabrics[i].url) return; // must have a fabric image to tag pillows for that fabric
+    const r=tagFrameEl.getBoundingClientRect();
+    const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+    fabrics[i].tags.push({x,y});
+    addOverlay(x,y,fabrics[i].url);
+    updateUI();
+  });
+
+  // Undo last tag and clear all tags for current fabric
+  undoBtn.addEventListener('click', ()=>{
+    if(!fabrics[i] || fabrics[i].tags.length===0) return;
+    fabrics[i].tags.pop(); redraw(); updateUI();
+  });
+  clearBtn.addEventListener('click', ()=>{
+    if(!fabrics[i]) return;
+    fabrics[i].tags=[]; redraw(); updateUI();
+  });
+
+  // Preview placeholder — integrate model call here
+  previewBtn.addEventListener('click', ()=>{
+    alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`);
+  });
+</script>
+</body>
+</html>
