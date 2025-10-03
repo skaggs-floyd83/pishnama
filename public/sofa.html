@@ -154,7 +154,7 @@
             <button class="active" data-q="standard">کیفیت معمولی</button>
             <button data-q="high">کیفیت بالا</button>
           </div>
-          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+          <button class="btn primary" id="previewBtn">✨ پیش‌نمایش</button>
         </div>
       </div>
     </section>
@@ -248,8 +248,8 @@
       }
     });
 
-    // 5) Preview gating: at least one part must be selected for the current fabric
-    previewBtn.disabled=(cur.parts.size===0);
+    // 5) Generate is always enabled; validation happens on click now
+    previewBtn.disabled=false;
 
     // 3) Add Fabric management:
     //    • Hidden if THREE fabrics already exist.
@@ -344,8 +344,62 @@
     updateUI();
   });
 
-  // Placeholder preview “Preview” integration point
+  
+  // ---------- Validation before generation (per requirements) ----------
+  function validateBeforeGenerateSofa(){
+    const errors = [];
+    const warnings = [];
+
+    // --- Mandatory checks ---
+    if(!sofaChosen){
+      errors.push("تصویر پایهٔ مبل انتخاب نشده است.");
+    }
+    const fabricsWithImg = fabrics.filter(f=>!!f.url);
+    if(fabricsWithImg.length===0){
+      errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
+    }
+    const anyTaggedOnImg = fabrics.some(f=> !!f.url && f.parts && f.parts.size>0 );
+    if(!anyTaggedOnImg){
+      errors.push("حداقل یک برچسب بخش (پشتی/نشیمن/دسته‌ها) باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
+    }
+
+    // --- Optional checks ---
+    // A) Fabric images without any assigned parts
+    const imgNoTags = fabrics
+      .map((f,i)=>({f,i}))
+      .filter(({f})=> !!f.url && (!f.parts || f.parts.size===0))
+      .map(({i})=> `پارچه ${faOrdinal(i+1)}`);
+    if(imgNoTags.length>0){
+      warnings.push("پارچه‌های بدون برچسب بخش: " + imgNoTags.join("، "));
+    }
+
+    // B) Parts selected for a fabric slot that has NO image yet (tags without fabric image)
+    const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
+    const tagsNoImg = fabrics
+      .map((f,i)=>({f,i}))
+      .filter(({f})=> !f.url && f.parts && f.parts.size>0)
+      .map(({f,i})=> `پارچه ${faOrdinal(i+1)} ⇒ ${[...f.parts].map(p=>partsFa[p]).join("، ")}`);
+    if(tagsNoImg.length>0){
+      warnings.push("برچسب‌هایی که پارچه‌ای برایشان انتخاب نشده: " + tagsNoImg.join(" | "));
+    }
+
+    return {errors, warnings};
+  }
+
+  // Replace previous click with validation flow
   previewBtn.addEventListener('click', ()=>{
+    const {errors, warnings} = validateBeforeGenerateSofa();
+
+    if(errors.length>0){
+      alert("خطاهای ضروری:\n- " + errors.join("\n- "));
+      return;
+    }
+
+    if(warnings.length>0){
+      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):\n- " + warnings.join("\n- ") + "\n\nادامهٔ تولید؟");
+      if(!proceed) return;
+    }
+
     const q=fabrics[idx].quality||'standard';
     alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
   });

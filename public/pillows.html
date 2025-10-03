@@ -141,7 +141,7 @@
             <button class="active" data-q="standard">کیفیت معمولی</button>
             <button data-q="high">کیفیت بالا</button>
           </div>
-          <button class="btn primary" id="previewBtn" disabled>✨ پیش‌نمایش</button>
+          <button class="btn primary" id="previewBtn">✨ پیش‌نمایش</button>
         </div>
       </div>
     </section>
@@ -240,8 +240,8 @@
       addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
     }
 
-    // Preview requires at least one tag on current fabric
-    previewBtn.disabled = !(cur && cur.tags.length>0);
+    // Generate is always enabled; validation happens on click now
+    previewBtn.disabled = false;
 
     // Title reflects current fabric’s ordinal
     const selTitle = document.getElementById('selTitle');
@@ -325,8 +325,50 @@
     fabrics[i].tags=[]; redraw(); updateUI();
   });
 
-  // Preview placeholder — integrate model call here
+
+  // ---------- Validation before generation (pillows) ----------
+  function validateBeforeGeneratePillows(){
+    const errors = [];
+    const warnings = [];
+
+    // --- Mandatory checks ---
+    if(!photoOk || !(baseImg2.src || baseImg.src)){
+      errors.push("تصویر پایهٔ مبل + کوسن‌ها انتخاب نشده است.");
+    }
+    const fabricsWithImg = fabrics.filter(f=>!!f.url);
+    if(fabricsWithImg.length===0){
+      errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
+    }
+    const anyHasTag = fabrics.some(f=> !!f.url && f.tags && f.tags.length>0);
+    if(!anyHasTag){
+      errors.push("حداقل یک برچسب کوسن باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
+    }
+
+    // --- Optional checks ---
+    // A) Fabric images without any tags
+    const imgNoTags = fabrics
+      .map((f,idx)=>({f,idx}))
+      .filter(({f})=> !!f.url && (!f.tags || f.tags.length===0))
+      .map(({idx})=> `پارچه ${faOrdinal(idx+1)}`);
+    if(imgNoTags.length>0){
+      warnings.push("پارچه‌های بدون برچسب کوسن: " + imgNoTags.join("، "));
+    }
+
+    return {errors, warnings};
+  }
+
+  // Replace previous click with validation flow
   previewBtn.addEventListener('click', ()=>{
+    const {errors, warnings} = validateBeforeGeneratePillows();
+
+    if(errors.length>0){
+      alert("خطاهای ضروری:\n- " + errors.join("\n- "));
+      return;
+    }
+    if(warnings.length>0){
+      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):\n- " + warnings.join("\n- ") + "\n\nادامهٔ تولید؟");
+      if(!proceed) return;
+    }
     alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`);
   });
 </script>
