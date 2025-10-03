@@ -383,6 +383,22 @@
       warnings.push("برچسب‌هایی که پارچه‌ای برایشان انتخاب نشده: " + tagsNoImg.join(" | "));
     }
 
+    
+    // C) Not all sofa parts (seat, back, arms) are assigned fabrics
+    (function(){
+      const required = ["back","seat","arms"];
+      const assigned = new Set();
+      fabrics.forEach(f=>{
+        if(f && f.url && f.parts && f.parts.size>0){
+          [...f.parts].forEach(p=>assigned.add(p));
+        }
+      });
+      const missing = required.filter(p=>!assigned.has(p));
+      if(missing.length>0){
+        const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
+        warnings.push("برخی بخش‌های مبل بدون پارچه باقی می‌مانند: " + missing.map(m=>partsFa[m]).join("، "));
+      }
+    })();
     return {errors, warnings};
   }
 
