@@ -68,6 +68,14 @@
 
   /* Fabric-tag overlays: 16×16 swatches; background image = fabric */
   .overlay{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;border:1px solid var(--accent);background-size:cover;background-position:center}
+
+  /* Tiny remove icon inside fabric selection frame */
+  .tinyX{position:absolute;left:8px;top:8px;background:#0f1a33;border:1px solid var(--border);border-radius:8px;padding:4px 6px;cursor:pointer;font-size:14px;line-height:1}
+  .tinyX:hover{background:#17213d}
+  /* Toast */
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
+  #toast.show{opacity:1}
+
 </style>
 </head>
 <body>
@@ -118,6 +126,7 @@
       <!-- Fabric selection frame: title line + buttons/thumbnail line -->
       <div class="controls">
         <div class="selectFrame">
+          <button class="tinyX" id="removeFabBtn" title="حذف پارچه">🗑️</button>
           <div class="row" style="justify-content:flex-start;width:100%">
             <strong id="selTitle" style="color:var(--muted);font-size:.95rem">انتخاب پارچه اول</strong>
           </div>
@@ -371,6 +380,45 @@
     }
     alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`);
   });
+
+  // --- Toast helper (pillows) ---
+  function showToast(msg){
+    const t=document.getElementById('toast'); if(!t) return;
+    t.textContent=msg; t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'), 1600);
+  }
+
+  // --- Remove current fabric (pillows): clears image + tags, reorders, selects next ---
+  ;(function(){
+    const btn=document.getElementById('removeFabBtn');
+    if(!btn) return;
+    btn.addEventListener('click', ()=>{
+      if(!fabrics[i]) return;
+      const removedIndex = i;
+
+      // Remove fabric; its tags live on the object so removal clears them
+      fabrics.splice(i,1);
+
+      if(fabrics.length===0){
+        fabrics.push({id:0,url:'',quality:'standard',tags:[]});
+        i=0;
+      }else{
+        // Reindex ids
+        fabrics.forEach((f,ii)=>{ f.id=ii; });
+        // Select the next fabric that was after the removed one (if any)
+        i = Math.min(removedIndex, fabrics.length-1);
+      }
+
+      // Refresh UI (thumbnail + overlay)
+      fabMini.style.visibility = fabrics[i].url ? 'visible' : 'hidden';
+      if(fabrics[i].url) fabMini.src = fabrics[i].url;
+      redraw();
+      updateUI();
+      showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+    });
+  })();
+
 </script>
+<div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

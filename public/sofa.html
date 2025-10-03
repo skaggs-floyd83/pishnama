@@ -75,6 +75,14 @@
   #sofaThumb, #frame .thumb { height: 220px !important; width: 100%; }
   #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
   .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
+
+  /* Tiny remove icon inside fabric frame */
+  .tinyX{position:absolute;left:8px;top:8px;background:#0f1a33;border:1px solid var(--border);border-radius:8px;padding:4px 6px;cursor:pointer;font-size:14px;line-height:1}
+  .tinyX:hover{background:#17213d}
+  /* Toast */
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
+  #toast.show{opacity:1}
+
 </style>
 </head>
 <body>
@@ -119,6 +127,7 @@
       <div class="card" id="frame">
         <!-- Preview frame: shows fabric image or ordinal placeholder until set -->
         <div class="thumb">
+          <button class="tinyX" id="removeFabBtn" title="حذف پارچه">🗑️</button>
           <span class="badge" id="wizBadge">پارچه 1 از 1</span>
           <span id="fabPlaceholder" style="position:absolute;color:var(--muted);font-size:.95rem">پارچه اول را انتخاب کنید</span>
           <img id="fabImg" alt="">
@@ -382,9 +391,7 @@
     if(tagsNoImg.length>0){
       warnings.push("برچسب‌هایی که پارچه‌ای برایشان انتخاب نشده: " + tagsNoImg.join(" | "));
     }
-
-    
-    // C) Not all sofa parts (seat, back, arms) are assigned fabrics
+    // C) Not all sofa parts (seat, back, arms) are assigned across fabrics
     (function(){
       const required = ["back","seat","arms"];
       const assigned = new Set();
@@ -399,6 +406,7 @@
         warnings.push("برخی بخش‌های مبل بدون پارچه باقی می‌مانند: " + missing.map(m=>partsFa[m]).join("، "));
       }
     })();
+
     return {errors, warnings};
   }
 
@@ -419,6 +427,47 @@
     const q=fabrics[idx].quality||'standard';
     alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
   });
+
+  // --- Toast helper (sofa) ---
+  function showToast(msg){
+    const t=document.getElementById('toast'); if(!t) return;
+    t.textContent=msg; t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'), 1600);
+  }
+
+  // --- Remove current fabric (sofa): clears image + parts, reorders, selects next ---
+  (function(){
+    const btn=document.getElementById('removeFabBtn');
+    if(!btn) return;
+    btn.addEventListener('click', ()=>{
+      if(!fabrics[idx]) return;
+      const removedIndex = idx;
+      const removedId = fabrics[idx].id;
+
+      // Clear assignments owned by this fabric
+      parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
+
+      // Remove fabric slot
+      fabrics.splice(idx,1);
+
+      if(fabrics.length===0){
+        fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+        idx=0;
+      }else{
+        // Reindex ids
+        fabrics.forEach((f,ii)=>{ f.id=ii; });
+        // Shift assigned indices above removedId
+        parts.forEach(p=>{ if(assigned[p]!=null && assigned[p]>removedId) assigned[p]=assigned[p]-1; });
+        // Select the next fabric after removed (or clamp)
+        idx = Math.min(removedIndex, fabrics.length-1);
+      }
+
+      showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+      updateUI();
+    });
+  })();
+
 </script>
+<div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
