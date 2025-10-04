@@ -68,6 +68,8 @@
 
   /* Fabric-tag overlays: 16×16 swatches; background image = fabric */
   .overlay{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;border:1px solid var(--accent);background-size:cover;background-position:center}
+  .overlay.dragEnabled.dragActive { cursor: -webkit-grab; cursor: grab; }
+  .overlay.dragEnabled.dragActive:active { cursor: -webkit-grabbing; cursor: grabbing; }
 
   /* Tiny remove icon inside fabric selection frame */
   .tinyX{position:absolute;left:8px;top:8px;background:#0f1a33;border:1px solid var(--border);border-radius:8px;padding:4px 6px;cursor:pointer;font-size:14px;line-height:1}
@@ -261,6 +263,21 @@
     // Thumbnail mirrors current fabric image
     if(cur && cur.url){ fabMini.src=cur.url; fabMini.style.visibility='visible'; }
     else { fabMini.style.visibility='hidden'; }
+    updateOverlayCursor();
+  }
+
+  
+  /* Keep cursor honest: only current fabric's tags show grab hand */
+  function updateOverlayCursor(){
+    const nodes = tagFrame.querySelectorAll('.overlay');
+    nodes.forEach(d=>{
+      const own = d.dataset.owner!=null ? Number(d.dataset.owner) : -1;
+      if(own===i && d.classList.contains('dragEnabled')){
+        d.classList.add('dragActive');
+      }else{
+        d.classList.remove('dragActive');
+      }
+    });
   }
 
   /* ---------- Overlay rendering ---------- */
@@ -301,14 +318,30 @@
       if(!draggingTag || draggingTag.el!==d) return;
       d.releasePointerCapture(ev.pointerId);
       draggingTag = null;
+      updateOverlayCursor();
     });
     d.addEventListener('click', (ev)=> ev.stopPropagation());
+    
+    // --- After creation, enable open-hand hover once user moves mouse a few px ---
+    (function(){
+      let startX=null, startY=null;
+      const enableAfterMove = (ev)=>{
+        if(startX===null){ startX=ev.clientX; startY=ev.clientY; return; }
+        if(Math.abs(ev.clientX-startX)>5 || Math.abs(ev.clientY-startY)>5){
+          d.classList.add('dragEnabled');
+          if(d.dataset.owner!==undefined && Number(d.dataset.owner)===i){ d.classList.add('dragActive'); }
+          document.removeEventListener('pointermove', enableAfterMove);
+        }
+      };
+      document.addEventListener('pointermove', enableAfterMove);
+    })();
     tagFrame.appendChild(d);
   }
 
   function redraw(){
     tagFrame.querySelectorAll('.overlay').forEach(n=>n.remove());
     fabrics.forEach((f,fi)=> f.tags.forEach((t,ti)=> addOverlay(t.x,t.y,f.url,fi,ti)) );
+    updateOverlayCursor();
   }
 
   /* ---------- Event wiring ---------- */
