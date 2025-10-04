@@ -195,6 +195,8 @@
   //   fabrics[i] owns: url (image), quality flag, and its own list of tag points [{x,y}] in normalized coords (0..1)
   let fabrics=[]; // each item: { id:number, url:string, quality:'standard'|'high', tags:Array<{x:number,y:number}> }
   let i=0;        // current fabric index being edited
+  let draggingTag=null; // {el:HTMLElement, pointerId:number}
+
   let photoOk=false;
   let baseObjectURL=null; // persisted blob URL across steps (fixes mobile issue where image would disappear)
 
@@ -263,19 +265,50 @@
 
   /* ---------- Overlay rendering ---------- */
 
-  function addOverlay(x,y,url){
+  function addOverlay(x,y,url,owner,ti){
     // Visual tag = 16px square carrying the fabric texture
     const d=document.createElement('div');
     d.className='overlay';
     d.style.left=(x*100)+'%';
     d.style.top=(y*100)+'%';
     d.style.backgroundImage=`url(${url})`;
+    if(owner!==undefined) d.dataset.owner = owner;
+    if(ti!==undefined)    d.dataset.ti    = ti;
+    d.style.touchAction = 'none';
+    d.addEventListener('pointerdown', (ev)=>{
+      if(d.dataset.owner!==undefined && Number(d.dataset.owner)!==i) return;
+      ev.stopPropagation();
+      d.setPointerCapture(ev.pointerId);
+      draggingTag = { el:d, pointerId:ev.pointerId };
+    });
+    d.addEventListener('pointermove', (ev)=>{
+      if(!draggingTag || draggingTag.el!==d) return;
+      const r=tagFrame.getBoundingClientRect();
+      let nx = (ev.clientX - r.left) / r.width;
+      let ny = (ev.clientY - r.top)  / r.height;
+      nx = Math.max(0, Math.min(1, nx));
+      ny = Math.max(0, Math.min(1, ny));
+      d.style.left = (nx*100)+'%';
+      d.style.top  = (ny*100)+'%';
+      const ownerIdx = i;
+      const tiIdx = d.dataset.ti!==undefined ? Number(d.dataset.ti) : null;
+      if(tiIdx!==null && fabrics[ownerIdx] && fabrics[ownerIdx].tags[tiIdx]){
+        fabrics[ownerIdx].tags[tiIdx].x = nx;
+        fabrics[ownerIdx].tags[tiIdx].y = ny;
+      }
+    });
+    d.addEventListener('pointerup', (ev)=>{
+      if(!draggingTag || draggingTag.el!==d) return;
+      d.releasePointerCapture(ev.pointerId);
+      draggingTag = null;
+    });
+    d.addEventListener('click', (ev)=> ev.stopPropagation());
     tagFrame.appendChild(d);
   }
 
   function redraw(){
     tagFrame.querySelectorAll('.overlay').forEach(n=>n.remove());
-    fabrics.forEach(f=> f.tags.forEach(t=> addOverlay(t.x,t.y,f.url)) );
+    fabrics.forEach((f,fi)=> f.tags.forEach((t,ti)=> addOverlay(t.x,t.y,f.url,fi,ti)) );
   }
 
   /* ---------- Event wiring ---------- */
@@ -320,7 +353,7 @@
     const r=tagFrameEl.getBoundingClientRect();
     const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
     fabrics[i].tags.push({x,y});
-    addOverlay(x,y,fabrics[i].url);
+    addOverlay(x,y,fabrics[i].url, i, fabrics[i].tags.length-1);
     updateUI();
   });
 
