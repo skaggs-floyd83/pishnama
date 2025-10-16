@@ -177,376 +177,475 @@
 </div>
 
 <script>
-  /* ---------- Utilities & State ---------- */
+/* =============================================================================
+   Pishnama — Sofa Page (Inline Script, Refactored)
+   Scope: Internal modularization & comments ONLY — ZERO behavior/UI changes
+   Notes:
+     - Public IDs/classes and Persian text are untouched.
+     - Structure: Typedefs → Constants/DOM → State → Helpers → Core UI Sync
+                  → Validation/Export → Handlers → Event Bindings → Init
+============================================================================= */
 
-  // Maps 1..3 to Persian ordinals: اول / دوم / سوم
-  function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+/** ============================================================================
+ * Typedefs (documentation only)
+ * @typedef {{ id:number, url:string, file?:File, quality:'standard'|'high', parts:Set<'back'|'seat'|'arms'> }} Fabric
+ * @typedef {{ back:number|null, seat:number|null, arms:number|null }} Assigned
+ * ========================================================================== */
 
-  // Hamburger toggling (click outside to close)
-  const hambtn=document.getElementById('hambtn');
-  const menu=document.getElementById('menu');
-  hambtn.addEventListener('click', ()=> menu.classList.toggle('show'));
-  document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show'); });
+/* ============================== Constants / DOM ============================ */
 
-  // Stage 1 elements
-  const sofaFile=document.getElementById('sofaFile');
-  const sofaCam=document.getElementById('sofaCam');
-  const sofaThumb=document.getElementById('sofaThumb');
-  const toFabricsBtn=document.getElementById('toFabricsBtn');
-  const stepUpload=document.getElementById('step-upload');
+// Maps 1..3 to Persian ordinals: اول / دوم / سوم
+function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
 
-  // Stage 2 elements
-  const stepFabrics=document.getElementById('step-fabrics');
-  const fabFile=document.getElementById('fabFile');
-  const fabCam=document.getElementById('fabCam');
-  const fabImg=document.getElementById('fabImg');
-  const wizBadge=document.getElementById('wizBadge');
-  const qToggle=document.getElementById('qToggle');
-  const schem=document.getElementById('schem');
-  const previewBtn=document.getElementById('previewBtn');
-  const addBtn=document.getElementById('addBtn');
-  const nextBtn=document.getElementById('nextBtn');
-  const prevStep=document.getElementById('prevStep');
+// Hamburger
+const hambtn   = document.getElementById('hambtn');
+const menu     = document.getElementById('menu');
 
-  // Logical part names; used for visibility rules and assignments
-  const parts=['back','seat','arms'];
+// Stage 1 (Upload)
+const sofaFile     = document.getElementById('sofaFile');
+const sofaCam      = document.getElementById('sofaCam');
+const sofaThumb    = document.getElementById('sofaThumb');
+const toFabricsBtn = document.getElementById('toFabricsBtn');
+const stepUpload   = document.getElementById('step-upload');
 
-  // Global UI state (no persistence): fabrics[] store image URL + assigned parts
-  let sofaChosen=false; // becomes true after an image is picked
-  let fabrics=[];       // each item: { id:number, url:string, quality:'standard'|'high', parts:Set<string> }
-  let assigned={back:null,seat:null,arms:null}; // which fabric id currently owns each part (or null)
-  let idx=0;            // index of "current" fabric being edited
-  let sofaBaseFile=null; // keep original base sofa File for export
+// Stage 2 (Fabrics)
+const stepFabrics  = document.getElementById('step-fabrics');
+const fabFile      = document.getElementById('fabFile');
+const fabCam       = document.getElementById('fabCam');
+const fabImg       = document.getElementById('fabImg');
+const wizBadge     = document.getElementById('wizBadge');
+const qToggle      = document.getElementById('qToggle');
+const schem        = document.getElementById('schem');
+const previewBtn   = document.getElementById('previewBtn');
+const addBtn       = document.getElementById('addBtn');
+const nextBtn      = document.getElementById('nextBtn');
+const prevStep     = document.getElementById('prevStep');
 
-  // Helper: set <img>.src with a Blob URL; revoke URL after load to avoid leaks
-  function loadImage(el,file){
-    const url=URL.createObjectURL(file);
-    el.src=url;
-    el.onload=()=>URL.revokeObjectURL(url);
-  }
+// Logical part names; used for visibility rules and assignments
+const parts = ['back','seat','arms'];
 
-  // Stage navigation
-  function gotoUpload(){ stepFabrics.classList.remove('active'); stepUpload.classList.add('active'); }
-  function gotoFabrics(){ stepUpload.classList.remove('active'); stepFabrics.classList.add('active'); updateUI(); }
+/* ================================== State ================================= */
 
-  /* ---------- Core UI sync (Stage 2) ----------
-     Responsibilities:
-       1) Update preview image + placeholder text
-       2) Update part grid visibility/active states under conflicting assignments
-       3) Manage “Add Fabric” (show/hide + label + enabled state)
-       4) Keep “Next” visible but disabled if there is no next fabric
-       5) Enable Preview only when some part(s) are assigned for current fabric
-  ------------------------------------------------ */
-  function updateUI(){
-    if(!fabrics[idx]) return;
-    const cur=fabrics[idx];
+// Global UI state (no persistence)
+let sofaChosen   = false; // becomes true after an image is picked
+/** @type {Fabric[]} */
+let fabrics      = [];    // each item: { id, url, quality:'standard'|'high', parts:Set<string> }
+ /** @type {Assigned} */
+let assigned     = {back:null, seat:null, arms:null}; // which fabric id owns each part (or null)
+let idx          = 0;     // index of "current" fabric being edited
+let sofaBaseFile = null;  // keep original base sofa File for export
 
-    // 1) Preview (image or ordinal placeholder)
-    fabImg.src=cur.url||'';
-    const ph=document.getElementById('fabPlaceholder');
-    if(cur.url){ ph.style.display='none'; }
-    else { ph.textContent=`پارچه ${faOrdinal(idx+1)} را انتخاب کنید`; ph.style.display='block'; }
+/* =============================== Helpers ================================== */
 
-    // Wizard badge: "پارچه X از N"
-    wizBadge.textContent=`پارچه ${idx+1} از ${fabrics.length}`;
+/** Set <img>.src with a Blob URL; revoke URL after load to avoid leaks */
+function loadImage(el, file){
+  const url = URL.createObjectURL(file);
+  el.src = url;
+  el.onload = () => URL.revokeObjectURL(url);
+}
 
-    // 2) Part grid visibility & active states
-    schem.querySelectorAll('.part').forEach(btn=>{
-      const p=btn.dataset.part;
-      if(p==='all'){
-        const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
-        btn.style.visibility=allAvail?'visible':'hidden';
-        btn.classList.toggle('active',cur.parts.size===3);
-      }else{
-        const visible=(assigned[p]===null||assigned[p]===cur.id);
-        btn.style.visibility=visible?'visible':'hidden';
-        btn.classList.toggle('active',cur.parts.has(p));
-      }
-    });
+/** Stage navigation (no side effects beyond DOM visibility) */
+function gotoUpload(){
+  stepFabrics.classList.remove('active');
+  stepUpload.classList.add('active');
+}
+function gotoFabrics(){
+  stepUpload.classList.remove('active');
+  stepFabrics.classList.add('active');
+  updateUI();
+}
 
-    // 5) Generate is always enabled; validation happens on click now
-    previewBtn.disabled=false;
+/* ============================== Core UI Sync ============================== */
+/*
+  Responsibilities:
+    1) Update preview image + placeholder text
+    2) Update part grid visibility/active states under conflicting assignments
+    3) Manage “Add Fabric” (show/hide + label + enabled state)
+    4) Keep “Next” visible but disabled when there is no next fabric
+    5) Enable Preview (generate) — validation happens on click
+*/
+function updateUI(){
+  if(!fabrics[idx]) return;
+  const cur = fabrics[idx];
 
-    // 3) Add Fabric management:
-    //    • Hidden if THREE fabrics already exist.
-    //    • Otherwise, label reflects NEXT ordinal (دوم or سوم).
-    //    • Enabled only when current fabric is "ready" (has image and >=1 part selected).
-    if(fabrics.length>=3){
-      addBtn.style.display='none';
-    }else{
-      addBtn.style.display='inline-block';
-      const nextOrdinal=faOrdinal(Math.min(fabrics.length+1,3));
-      addBtn.textContent=`➕ افزودن پارچه ${nextOrdinal}`;
+  // 1) Preview (image or ordinal placeholder)
+  fabImg.src = cur.url || '';
+  const ph = document.getElementById('fabPlaceholder');
+  if(cur.url){ ph.style.display='none'; }
+  else { ph.textContent = `پارچه ${faOrdinal(idx+1)} را انتخاب کنید`; ph.style.display='block'; }
 
-      const allAssignedOverall=parts.every(p=>assigned[p]!==null);
-      const curAll=(cur.parts.size===3);
-      const currentReady=!!cur.url && cur.parts.size>0;
-      addBtn.disabled=allAssignedOverall||curAll||!currentReady;
-    }
+  // Wizard badge: "پارچه X از N"
+  wizBadge.textContent = `پارچه ${idx+1} از ${fabrics.length}`;
 
-    // 4) Next button: always present; disabled if there is no next fabric
-    nextBtn.style.display='inline-block';
-    nextBtn.disabled = !(idx < fabrics.length-1);
-  }
-
-  /* ---------- Event wiring ---------- */
-
-  // Stage navigation: Prev from the first fabric returns to upload
-  prevStep.addEventListener('click', ()=>{ if(idx>0){ idx--; updateUI(); } else { gotoUpload(); }});
-  nextBtn.addEventListener('click', ()=>{ if(idx<fabrics.length-1){ idx++; updateUI(); }});
-
-  // Add a new fabric slot (up to 3). Starts empty (no image, no parts).
-  addBtn.addEventListener('click', ()=>{
-    if(addBtn.disabled) return;
-    fabrics.push({id:fabrics.length,url:'',quality:'standard',parts:new Set()});
-    idx=fabrics.length-1;
-    updateUI();
-  });
-
-  // Stage 1: selecting the base sofa image enables Continue after load
-  sofaFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; sofaChosen=true; sofaBaseFile=f;
-    toFabricsBtn.disabled=false;
-    sofaThumb.innerHTML='<img>';
-    loadImage(sofaThumb.firstElementChild,f);
-    if(fabrics.length===0) fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
-    idx=0;
-  });
-  // Camera mirrors file selection
-  sofaCam.addEventListener('change', ()=>sofaFile.dispatchEvent(new Event('change')));
-  toFabricsBtn.addEventListener('click', ()=>{ if(!sofaChosen) return; gotoFabrics(); });
-
-  // Fabric image selection for current fabric idx
-  function setFabricFromFile(file){ const url=URL.createObjectURL(file); fabrics[idx].url=url; fabrics[idx].file=file;
-    fabImg.src=url;
-    updateUI();
-  }
-  fabFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
-  fabCam .addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); });
-
-  // Quality toggle: per-fabric (standard/high) — UI only
-  qToggle.addEventListener('click', e=>{
-    const b=e.target.closest('button'); if(!b||!fabrics[idx]) return;
-    [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
-    fabrics[idx].quality=b.dataset.q;
-  });
-
-  // Part assignment rules:
-  //  • Clicking “all” toggles owning all 3 parts (if no conflict).
-  //  • Clicking individual part toggles ownership by current fabric.
-  //  • A part cannot be owned by two different fabrics simultaneously.
-  schem.addEventListener('click', e=>{
-    const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
-    const p=btn.dataset.part;
-    const cur=fabrics[idx];
-
+  // 2) Part grid visibility & active states
+  schem.querySelectorAll('.part').forEach(btn=>{
+    const p = btn.dataset.part;
     if(p==='all'){
-      const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
-      if(!allAvail) return;
-      const turnOn=(cur.parts.size!==3);
-      parts.forEach(pa=>{
-        if(turnOn){ cur.parts.add(pa); assigned[pa]=cur.id; }
-        else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
-      });
+      const allAvail = parts.every(pa => (assigned[pa]===null || assigned[pa]===cur.id));
+      btn.style.visibility = allAvail ? 'visible' : 'hidden';
+      btn.classList.toggle('active', cur.parts.size===3);
     }else{
-      const visible=(assigned[p]===null||assigned[p]===cur.id);
-      if(!visible) return;
-      if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
-      else { cur.parts.add(p); assigned[p]=cur.id; }
+      const visible = (assigned[p]===null || assigned[p]===cur.id);
+      btn.style.visibility = visible ? 'visible' : 'hidden';
+      btn.classList.toggle('active', cur.parts.has(p));
     }
-    updateUI();
   });
 
-  
-  // ---------- Validation before generation (per requirements) ----------
-  function validateBeforeGenerateSofa(){
-    const errors = [];
-    const warnings = [];
+  // 5) Generate is always enabled; validation happens on click now
+  previewBtn.disabled = false;
 
-    // --- Mandatory checks ---
-    if(!sofaChosen){
-      errors.push("تصویر پایهٔ مبل انتخاب نشده است.");
-    }
-    const fabricsWithImg = fabrics.filter(f=>!!f.url);
-    if(fabricsWithImg.length===0){
-      errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
-    }
-    const anyTaggedOnImg = fabrics.some(f=> !!f.url && f.parts && f.parts.size>0 );
-    if(!anyTaggedOnImg){
-      errors.push("حداقل یک برچسب بخش (پشتی/نشیمن/دسته‌ها) باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
-    }
+  // 3) Add Fabric management
+  if(fabrics.length>=3){
+    addBtn.style.display='none';
+  }else{
+    addBtn.style.display='inline-block';
+    const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+    addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
 
-    // --- Optional checks ---
-    // A) Fabric images without any assigned parts
-    const imgNoTags = fabrics
-      .map((f,i)=>({f,i}))
-      .filter(({f})=> !!f.url && (!f.parts || f.parts.size===0))
-      .map(({i})=> `پارچه ${faOrdinal(i+1)}`);
-    if(imgNoTags.length>0){
-      warnings.push("پارچه‌های بدون برچسب بخش: " + imgNoTags.join("، "));
-    }
-
-    // B) Parts selected for a fabric slot that has NO image yet (tags without fabric image)
-    const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
-    const tagsNoImg = fabrics
-      .map((f,i)=>({f,i}))
-      .filter(({f})=> !f.url && f.parts && f.parts.size>0)
-      .map(({f,i})=> `پارچه ${faOrdinal(i+1)} ⇒ ${[...f.parts].map(p=>partsFa[p]).join("، ")}`);
-    if(tagsNoImg.length>0){
-      warnings.push("برچسب‌هایی که پارچه‌ای برایشان انتخاب نشده: " + tagsNoImg.join(" | "));
-    }
-    // C) Not all sofa parts (seat, back, arms) are assigned across fabrics
-    (function(){
-      const required = ["back","seat","arms"];
-      const assigned = new Set();
-      fabrics.forEach(f=>{
-        if(f && f.url && f.parts && f.parts.size>0){
-          [...f.parts].forEach(p=>assigned.add(p));
-        }
-      });
-
-  const missing = required.filter(p=>!assigned.has(p));
-      if(missing.length>0){
-        const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
-        warnings.push("برخی بخش‌های مبل بدون پارچه باقی می‌مانند: " + missing.map(m=>partsFa[m]).join("، "));
-      }
-    })();
-
-    return {errors, warnings};
+    const allAssignedOverall = parts.every(p=>assigned[p]!==null);
+    const curAll = (cur.parts.size===3);
+    const currentReady = !!cur.url && cur.parts.size>0;
+    addBtn.disabled = allAssignedOverall || curAll || !currentReady;
   }
 
+  // 4) Next button: always present; disabled if there is no next fabric
+  nextBtn.style.display='inline-block';
+  nextBtn.disabled = !(idx < fabrics.length-1);
+}
 
-// --- Dev-save helpers (ZIP) ---
-  function tsNow(){
-    const p = new Date();
-    const z = n=>String(n).padStart(2,'0');
-    return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
-  }
-  function ext(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png'; }
-  function downloadBlob(blob, filename){
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download=filename;
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
-  }
-  function buildSofaMetaAndFiles(){
-    const qBtn = qToggle.querySelector('.active');
-    const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
-    const included = [];
-    const excluded = [];
-    fabrics.forEach((f,fi)=>{
-      const id = `fabric_${String(fi+1).padStart(2,'0')}`;
-      const hasFile = !!f.file;
-      const partsList = f.parts ? Array.from(f.parts) : [];
-      if(hasFile && partsList.length>0){
-        included.push({ id, parts: partsList, file: f.file });
-      }else{
-        const reason = !hasFile ? 'no image' : 'no parts';
-        excluded.push({ id, reason });
-      }
-    });
-    const meta = {
-      mode: 'sofa',
-      quality,
-      fabrics: included.map(x=>({id:x.id, parts:x.parts})),
-      excluded,
-      files: {
-        base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
-        fabrics: included.map(x=> x.id + ext(x.file.name))
-      }
-    };
-    const lines = [];
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
-    lines.push('=== HEADER ===');
-    lines.push('mode: sofa');
-    lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
-    lines.push(`quality: ${quality}`);
-    lines.push('');
-    lines.push('=== INCLUDED FABRICS ===');
-    if(included.length===0){ lines.push('(none)'); }
-    included.forEach(x=>{
-      lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
-      lines.push(`  sofa.parts: [${x.parts.join(', ')}]`);
-    });
-    lines.push('');
-    lines.push('=== EXCLUSIONS (NOT SENT) ===');
-    if(excluded.length===0){ lines.push('(none)'); }
-    excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
-    lines.push('');
-    lines.push('=== FILES IN THIS EXPORT ===');
-    if(sofaBaseFile) lines.push(`- ${'base_image'+ext(sofaBaseFile.name)}`);
-    included.forEach(x=> lines.push(`- ${x.id+ext(x.file.name)}`));
-    return {meta, included, metaTxt: lines.join('\n'), quality};
-  }
-    
+/* ===================== Validation (pre-generation) ======================== */
 
-      
-  // Replace previous click with validation flow
-  
-  previewBtn.addEventListener('click', async ()=>{
-    const {errors, warnings} = validateBeforeGenerateSofa();
-    if(errors.length>0){
-      alert("خطاهای ضروری:- " + errors.join("- "));
-      return;
-    }
-    if(warnings.length>0){
-      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):- " + warnings.join("- ") + "ادامهٔ تولید؟");
-      if(!proceed) return;
-    }
-    const {meta, included, metaTxt} = buildSofaMetaAndFiles();
-    const zip = new JSZip();
-    zip.file('meta.json', JSON.stringify(meta, null, 2));
-    zip.file('meta.txt', metaTxt);
-    if(sofaBaseFile){
-      const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
-      zip.file(baseName, sofaBaseFile);
-    }
-    for(const it of included){
-      zip.file(it.id + ext(it.file.name), it.file);
-    }
-    const blob = await zip.generateAsync({type:'blob'});
-    downloadBlob(blob, 'sofa_export_' + tsNow() + '.zip');
-  });
-    // --- Toast helper (sofa) ---
-  function showToast(msg){
-    const t=document.getElementById('toast'); if(!t) return;
-    t.textContent=msg; t.classList.add('show');
-    setTimeout(()=>t.classList.remove('show'), 1600);
+function validateBeforeGenerateSofa(){
+  const errors = [];
+  const warnings = [];
+
+  // --- Mandatory checks ---
+  if(!sofaChosen){
+    errors.push("تصویر پایهٔ مبل انتخاب نشده است.");
+  }
+  const fabricsWithImg = fabrics.filter(f=>!!f.url);
+  if(fabricsWithImg.length===0){
+    errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
+  }
+  const anyTaggedOnImg = fabrics.some(f=> !!f.url && f.parts && f.parts.size>0 );
+  if(!anyTaggedOnImg){
+    errors.push("حداقل یک برچسب بخش (پشتی/نشیمن/دسته‌ها) باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
   }
 
-  // --- Remove current fabric (sofa): clears image + parts, reorders, selects next ---
+  // --- Optional checks ---
+  // A) Fabric images without any assigned parts
+  const imgNoTags = fabrics
+    .map((f,i)=>({f,i}))
+    .filter(({f})=> !!f.url && (!f.parts || f.parts.size===0))
+    .map(({i})=> `پارچه ${faOrdinal(i+1)}`);
+  if(imgNoTags.length>0){
+    warnings.push("پارچه‌های بدون برچسب بخش: " + imgNoTags.join("، "));
+  }
+
+  // B) Parts selected for a fabric slot that has NO image yet (tags without fabric image)
+  const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
+  const tagsNoImg = fabrics
+    .map((f,i)=>({f,i}))
+    .filter(({f})=> !f.url && f.parts && f.parts.size>0)
+    .map(({f,i})=> `پارچه ${faOrdinal(i+1)} ⇒ ${[...f.parts].map(p=>partsFa[p]).join("، ")}`);
+  if(tagsNoImg.length>0){
+    warnings.push("برچسب‌هایی که پارچه‌ای برایشان انتخاب نشده: " + tagsNoImg.join(" | "));
+  }
+
+  // C) Not all sofa parts (seat, back, arms) are assigned across fabrics
   (function(){
-    const btn=document.getElementById('removeFabBtn');
-    if(!btn) return;
-    btn.addEventListener('click', ()=>{
-      if(!fabrics[idx]) return;
-      const removedIndex = idx;
-      const removedId = fabrics[idx].id;
-
-      // Clear assignments owned by this fabric
-      parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
-
-      // Remove fabric slot
-      fabrics.splice(idx,1);
-
-      if(fabrics.length===0){
-        fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
-        idx=0;
-      }else{
-        // Reindex ids
-        fabrics.forEach((f,ii)=>{ f.id=ii; });
-        // Shift assigned indices above removedId
-        parts.forEach(p=>{ if(assigned[p]!=null && assigned[p]>removedId) assigned[p]=assigned[p]-1; });
-        // Select the next fabric after removed (or clamp)
-        idx = Math.min(removedIndex, fabrics.length-1);
+    const required = ["back","seat","arms"];
+    const seen = new Set();
+    fabrics.forEach(f=>{
+      if(f && f.url && f.parts && f.parts.size>0){
+        [...f.parts].forEach(p=>seen.add(p));
       }
-
-      showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
-      updateUI();
     });
+    const missing = required.filter(p=>!seen.has(p));
+    if(missing.length>0){
+      const partsFa2 = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
+      warnings.push("برخی بخش‌های مبل بدون پارچه باقی می‌مانند: " + missing.map(m=>partsFa2[m]).join("، "));
+    }
   })();
 
+  return {errors, warnings};
+}
+
+/* ========================== Export / ZIP Helpers ========================== */
+
+function tsNow(){
+  const p = new Date();
+  const z = n=>String(n).padStart(2,'0');
+  return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
+}
+function ext(name){
+  const i = name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png';
+}
+function downloadBlob(blob, filename){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
+}
+
+/** Build meta/files overview WITHOUT side effects (pure builder) */
+function buildSofaMetaAndFiles(){
+  const qBtn = qToggle.querySelector('.active');
+  const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+
+  const included = [];
+  const excluded = [];
+  fabrics.forEach((f,fi)=>{
+    const id = `fabric_${String(fi+1).padStart(2,'0')}`;
+    const hasFile = !!f.file;
+    const partsList = f.parts ? Array.from(f.parts) : [];
+    if(hasFile && partsList.length>0){
+      included.push({ id, parts: partsList, file: f.file });
+    }else{
+      const reason = !hasFile ? 'no image' : 'no parts';
+      excluded.push({ id, reason });
+    }
+  });
+
+  const meta = {
+    mode: 'sofa',
+    quality,
+    fabrics: included.map(x=>({id:x.id, parts:x.parts})),
+    excluded,
+    files: {
+      base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
+      fabrics: included.map(x=> x.id + ext(x.file.name))
+    }
+  };
+
+  const lines = [];
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  lines.push('=== HEADER ===');
+  lines.push('mode: sofa');
+  lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
+  lines.push(`quality: ${quality}`);
+  lines.push('');
+  lines.push('=== INCLUDED FABRICS ===');
+  if(included.length===0){ lines.push('(none)'); }
+  included.forEach(x=>{
+    lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
+    lines.push(`  sofa.parts: [${x.parts.join(', ')}]`);
+  });
+  lines.push('');
+  lines.push('=== EXCLUSIONS (NOT SENT) ===');
+  if(excluded.length===0){ lines.push('(none)'); }
+  excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
+  lines.push('');
+  lines.push('=== FILES IN THIS EXPORT ===');
+  if(sofaBaseFile) lines.push(`- ${'base_image'+ext(sofaBaseFile.name)}`);
+  included.forEach(x=> lines.push(`- ${x.id+ext(x.file.name)}`));
+
+  return {meta, included, metaTxt: lines.join('\n'), quality};
+}
+
+/* ========================== Toast (UI affordance) ========================= */
+
+function showToast(msg){
+  const t=document.getElementById('toast'); if(!t) return;
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+/* ============================ Named Handlers ============================== */
+
+// Hamburger: toggle menu
+function handleHamburgerClick(){
+  menu.classList.toggle('show');
+}
+// Close menu on outside click
+function handleDocumentClick(e){
+  if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show');
+}
+
+// Stage nav
+function handlePrevStepClick(){
+  if(idx>0){ idx--; updateUI(); } else { gotoUpload(); }
+}
+function handleNextBtnClick(){
+  if(idx<fabrics.length-1){ idx++; updateUI(); }
+}
+
+// Add a new fabric slot (up to 3). Starts empty (no image, no parts).
+function handleAddBtnClick(){
+  if(addBtn.disabled) return;
+  fabrics.push({id:fabrics.length, url:'', quality:'standard', parts:new Set()});
+  idx = fabrics.length-1;
+  updateUI();
+}
+
+// Stage 1: selecting the base sofa image enables Continue after load
+function handleSofaFileChange(e){
+  const f=e.target.files?.[0]; if(!f) return;
+  sofaChosen = true;
+  sofaBaseFile = f;
+  toFabricsBtn.disabled = false;
+  sofaThumb.innerHTML = '<img>';
+  loadImage(sofaThumb.firstElementChild, f);
+  if(fabrics.length===0) fabrics.push({id:0, url:'', quality:'standard', parts:new Set()});
+  idx = 0;
+}
+// Camera mirrors file selection
+function handleSofaCamChange(){
+  sofaFile.dispatchEvent(new Event('change'));
+}
+function handleToFabricsClick(){
+  if(!sofaChosen) return;
+  gotoFabrics();
+}
+
+// Fabric image selection for current fabric idx
+function setFabricFromFile(file){
+  const url = URL.createObjectURL(file);
+  fabrics[idx].url = url;
+  fabrics[idx].file = file;
+  fabImg.src = url;
+  updateUI();
+}
+function handleFabFileChange(e){
+  const f=e.target.files?.[0]; if(!f) return;
+  setFabricFromFile(f);
+}
+function handleFabCamChange(e){
+  const f=e.target.files?.[0]; if(!f) return;
+  setFabricFromFile(f);
+}
+
+// Quality toggle: per-fabric (standard/high) — UI only
+function handleQToggleClick(e){
+  const b=e.target.closest('button'); if(!b||!fabrics[idx]) return;
+  [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+  fabrics[idx].quality = b.dataset.q;
+}
+
+// Part assignment rules (see original comments)
+function handleSchemClick(e){
+  const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
+  const p=btn.dataset.part;
+  const cur=fabrics[idx];
+
+  if(p==='all'){
+    const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
+    if(!allAvail) return;
+    const turnOn=(cur.parts.size!==3);
+    parts.forEach(pa=>{
+      if(turnOn){ cur.parts.add(pa); assigned[pa]=cur.id; }
+      else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
+    });
+  }else{
+    const visible=(assigned[p]===null||assigned[p]===cur.id);
+    if(!visible) return;
+    if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
+    else { cur.parts.add(p); assigned[p]=cur.id; }
+  }
+  updateUI();
+}
+
+// Validation + ZIP build + download
+async function handlePreviewClick(){
+  const {errors, warnings} = validateBeforeGenerateSofa();
+  if(errors.length>0){
+    alert("خطاهای ضروری:- " + errors.join("- "));
+    return;
+  }
+  if(warnings.length>0){
+    const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):- " + warnings.join("- ") + "ادامهٔ تولید؟");
+    if(!proceed) return;
+  }
+  const {meta, included, metaTxt} = buildSofaMetaAndFiles();
+  const zip = new JSZip();
+  zip.file('meta.json', JSON.stringify(meta, null, 2));
+  zip.file('meta.txt', metaTxt);
+  if(sofaBaseFile){
+    const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
+    zip.file(baseName, sofaBaseFile);
+  }
+  for(const it of included){
+    zip.file(it.id + ext(it.file.name), it.file);
+  }
+  const blob = await zip.generateAsync({type:'blob'});
+  downloadBlob(blob, 'sofa_export_' + tsNow() + '.zip');
+}
+
+// Remove current fabric (clears image + parts, reorders, selects next)
+function handleRemoveFabricClick(){
+  if(!fabrics[idx]) return;
+  const removedIndex = idx;
+  const removedId = fabrics[idx].id;
+
+  // Clear assignments owned by this fabric
+  parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
+
+  // Remove fabric slot
+  fabrics.splice(idx,1);
+
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    idx=0;
+  }else{
+    // Reindex ids
+    fabrics.forEach((f,ii)=>{ f.id=ii; });
+    // Shift assigned indices above removedId
+    parts.forEach(p=>{ if(assigned[p]!=null && assigned[p]>removedId) assigned[p]=assigned[p]-1; });
+    // Select the next fabric after removed (or clamp)
+    idx = Math.min(removedIndex, fabrics.length-1);
+  }
+
+  showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+  updateUI();
+}
+
+/* ============================== Event Bindings ============================ */
+
+// Hamburger + outside close
+hambtn.addEventListener('click', handleHamburgerClick);
+document.addEventListener('click', handleDocumentClick);
+
+// Stage navigation
+prevStep.addEventListener('click', handlePrevStepClick);
+nextBtn.addEventListener('click', handleNextBtnClick);
+
+// Add fabric
+addBtn.addEventListener('click', handleAddBtnClick);
+
+// Stage 1 (Upload)
+sofaFile.addEventListener('change', handleSofaFileChange);
+sofaCam .addEventListener('change', handleSofaCamChange);
+toFabricsBtn.addEventListener('click', handleToFabricsClick);
+
+// Stage 2 (Fabrics)
+fabFile.addEventListener('change', handleFabFileChange);
+fabCam .addEventListener('change', handleFabCamChange);
+qToggle.addEventListener('click', handleQToggleClick);
+schem  .addEventListener('click', handleSchemClick);
+
+// Generate (Preview)
+previewBtn.addEventListener('click', handlePreviewClick);
+
+// Remove fabric (IIFE in original → direct binding here)
+(function bindRemoveFabric(){
+  const btn=document.getElementById('removeFabBtn');
+  if(!btn) return;
+  btn.addEventListener('click', handleRemoveFabricClick);
+})();
+
+/* ================================== Init ================================= */
+
+// Ensure we start with an empty fabric slot if needed
+(function init(){
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    idx=0;
+  }
+  // Do not call updateUI() here to avoid any visual flicker before user input.
+})();
 </script>
+
 <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
