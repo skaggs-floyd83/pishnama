@@ -78,7 +78,9 @@
   #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
   #toast.show{opacity:1}
 
+  .overlay-annot{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;opacity:0;pointer-events:none}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -216,6 +218,9 @@
   let fabrics=[]; // each item: { id:number, url:string, quality:'standard'|'high', tags:Array<{x:number,y:number}> }
   let i=0;        // current fabric index being edited
   let draggingTag=null; // {el:HTMLElement, pointerId:number}
+  let baseOriginalFile=null;
+  let nextMarkerId=1;
+
 
   let photoOk=false;
   let baseObjectURL=null; // persisted blob URL across steps (fixes mobile issue where image would disappear)
@@ -224,6 +229,7 @@
 
   // Create & persist a blob URL for stage 1; do NOT revoke until replaced (we reuse it in stage 2)
   function loadBase(file){
+    baseOriginalFile = file;
     if(baseObjectURL){ URL.revokeObjectURL(baseObjectURL); baseObjectURL=null; }
     baseObjectURL = URL.createObjectURL(file);
     baseImg.src = baseObjectURL;
@@ -232,7 +238,8 @@
   function setFabricFromFile(file){
     const url=URL.createObjectURL(file);
     fabrics[i].url=url;
-    fabMini.src=url;
+    fabrics[i].file = file;
+fabMini.src=url;
     fabMini.style.visibility='visible';
     redraw(); updateUI();
   }
@@ -353,11 +360,21 @@
       };
       document.addEventListener('pointermove', enableAfterMove);
     })();
+    
+    // Hidden twin for annotated export (exact same geometry), rendered beneath the visible one
+    const a=document.createElement('div');
+    a.className='overlay overlay-annot';
+    a.style.left=d.style.left;
+    a.style.top =d.style.top;
+    if(d.dataset.owner!==undefined) a.dataset.owner = d.dataset.owner;
+    if(d.dataset.ti!==undefined)    a.dataset.ti    = d.dataset.ti;
+    try{ const mid=(typeof owner!=='undefined'&&typeof ti!=='undefined'&&fabrics[owner]&&fabrics[owner].tags[ti])?fabrics[owner].tags[ti].id:null; if(mid!=null) a.dataset.mid=String(mid);}catch(_){}
+    tagFrame.appendChild(a);
     tagFrame.appendChild(d);
   }
 
   function redraw(){
-    tagFrame.querySelectorAll('.overlay').forEach(n=>n.remove());
+    tagFrame.querySelectorAll('.overlay, .overlay-annot').forEach(n=>n.remove());
     fabrics.forEach((f,fi)=> f.tags.forEach((t,ti)=> addOverlay(t.x,t.y,f.url,fi,ti)) );
     updateOverlayCursor();
   }
@@ -403,7 +420,7 @@
     if(!fabrics[i] || !fabrics[i].url) return; // must have a fabric image to tag pillows for that fabric
     const r=tagFrameEl.getBoundingClientRect();
     const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
-    fabrics[i].tags.push({x,y});
+    fabrics[i].tags.push({id: nextMarkerId++, x, y});
     addOverlay(x,y,fabrics[i].url, i, fabrics[i].tags.length-1);
     updateUI();
   });
@@ -451,19 +468,135 @@
   }
 
   // Replace previous click with validation flow
-  previewBtn.addEventListener('click', ()=>{
-    const {errors, warnings} = validateBeforeGeneratePillows();
+  
+  const FAB_COLORS = ['#FF3838','#2A7FFF','#18C13C','#FF8A00','#8A3FFC','#12C2C2','#FF3D9A','#FFCC00'];
+  function fabricColor(fi){ return FAB_COLORS[fi % FAB_COLORS.length]; }
 
-    if(errors.length>0){
-      alert("خطاهای ضروری:\n- " + errors.join("\n- "));
-      return;
+
+  function tsNow(){ const p=new Date(),z=n=>String(n).padStart(2,'0'); return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`; }
+  function ext(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png'; }
+  function downloadBlob(blob, filename){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000); }
+  function buildPillowsMetaAndFiles(){
+    const qBtn = qToggle.querySelector('.active');
+    const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+    const included=[]; const excluded=[];
+    fabrics.forEach((f,fi)=>{
+      const id = `fabric_${String(fi+1).padStart(2,'0')}`;
+      const hasFile = !!f.file;
+      const tagsList = Array.isArray(f.tags) ? f.tags.slice() : [];
+      if(hasFile && tagsList.length>0){
+        included.push({ id, ownerIndex: fi, file: f.file, tags: tagsList });
+      }else{
+        excluded.push({ id, reason: !hasFile ? 'no image' : 'no tags' });
+      }
+    });
+    const meta = {
+      mode: 'pillows',
+      quality,
+      fabrics: included.map(x=>({ id:x.id, marker_ids: x.tags.map(t=>t.id) })),
+      excluded,
+      files: {
+        base_image_raw: baseOriginalFile ? 'base_image_raw'+ext(baseOriginalFile.name) : 'base_image_raw.png',
+        base_image_annotated: 'base_image_annotated.png',
+        fabrics: included.map(x=> x.id + ext(x.file.name))
+      }
+    };
+    const lines=[]; const tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'local';
+    lines.push('=== HEADER ==='); lines.push('mode: pillows'); lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`); lines.push(`quality: ${quality}`); lines.push('');
+    lines.push('=== INCLUDED FABRICS ==='); if(included.length===0){ lines.push('(none)'); }
+    included.forEach(x=>{ lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`); lines.push(`  pillows.marker_ids: [${x.tags.map(t=>t.id).join(', ')}]`); });
+    lines.push(''); lines.push('=== EXCLUSIONS (NOT SENT) ==='); if(excluded.length===0){ lines.push('(none)'); }
+    excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
+    lines.push(''); lines.push('=== FILES IN THIS EXPORT ==='); lines.push(meta.files.base_image_raw); lines.push('base_image_annotated.png'); included.forEach(x=> lines.push(x.id+ext(x.file.name)));
+    return {meta, included, metaTxt: lines.join('')};
+  }
+
+
+  async function makeAnnotatedBlobFromDOM(){
+    const baseEl = baseImg2;
+    const img = new Image();
+    const url = (baseOriginalFile instanceof File) ? URL.createObjectURL(baseOriginalFile) : (baseEl && baseEl.src ? baseEl.src : null);
+    if(!url) return null;
+    await new Promise((res,rej)=>{ img.onload=()=>res(); img.onerror=rej; img.src=url; });
+    const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
+    const c=document.createElement('canvas'); c.width=W; c.height=H; const ctx=c.getContext('2d');
+    ctx.drawImage(img,0,0,W,H);
+    const imgRect = baseEl.getBoundingClientRect(); const sx=W/imgRect.width, sy=H/imgRect.height;
+    function rr(ctx,x,y,w,h,r){ const k=Math.min(r,w/2,h/2); ctx.beginPath();
+      ctx.moveTo(x+k,y); ctx.lineTo(x+w-k,y); ctx.quadraticCurveTo(x+w,y,x+w,y+k);
+      ctx.lineTo(x+w,y+h-k); ctx.quadraticCurveTo(x+w,y+h,x+w-k,y+h);
+      ctx.lineTo(x+k,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-k);
+      ctx.lineTo(x,y+k); ctx.quadraticCurveTo(x,y,x+k,y);
     }
-    if(warnings.length>0){
-      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):\n- " + warnings.join("\n- ") + "\n\nادامهٔ تولید؟");
-      if(!proceed) return;
-    }
-    alert(`(دمو) پیش‌نمایش کوسن — پارچه ${i+1} — کیفیت: ${fabrics[i].quality||'standard'}`);
-  });
+    document.querySelectorAll('#tagFrame .overlay-annot').forEach(ov=>{
+      const r=ov.getBoundingClientRect(); const owner=Number(ov.dataset.owner); const ti=Number(ov.dataset.ti);
+      const id=(fabrics[owner]&&fabrics[owner].tags&&fabrics[owner].tags[ti])?fabrics[owner].tags[ti].id:null;
+      const color = FAB_COLORS[owner % FAB_COLORS.length];
+      const cx=(r.left+r.width/2 - imgRect.left)*sx, cy=(r.top+r.height/2 - imgRect.top)*sy;
+      const w=r.width*sx, h=r.height*sy;
+      const br=parseFloat(getComputedStyle(ov).borderRadius.split(' ')[0])||4; const rad=Math.min(br*((sx+sy)/2), Math.min(w,h)/2);
+      const x=cx - w/2, y=cy - h/2;
+      ctx.save(); ctx.globalAlpha=0.92; rr(ctx,x,y,w,h,rad); ctx.fillStyle='#181818'; ctx.fill();
+      ctx.lineWidth=3; ctx.shadowColor='rgba(255,255,255,0.9)'; ctx.shadowBlur=2; ctx.strokeStyle=color; ctx.stroke(); ctx.restore();
+      if(id!=null){ ctx.save(); const fontPx=Math.max(10, Math.round(0.6*Math.min(w,h))); ctx.font=`bold ${fontPx}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#FFFFFF'; ctx.fillText(String(id), cx, cy); ctx.restore(); }
+    });
+    return await new Promise(res=> c.toBlob(res,'image/png',0.92));
+  }
+
+
+  // Keep hidden twins aligned with visible overlays
+  function syncTwinsWithVisible(){
+    const frame = document.getElementById('tagFrame');
+    if(!frame) return;
+    const visibles = frame.querySelectorAll('.overlay:not(.overlay-annot)');
+    visibles.forEach(ov=>{
+      const owner = ov.dataset.owner;
+      const ti    = ov.dataset.ti;
+      if(owner===undefined || ti===undefined) return;
+      let twin = frame.querySelector(`.overlay-annot[data-owner="${owner}"][data-ti="${ti}"]`);
+      if(!twin){
+        twin = document.createElement('div');
+        twin.className = 'overlay overlay-annot';
+        twin.dataset.owner = owner;
+        twin.dataset.ti = ti;
+        frame.appendChild(twin);
+      }
+      twin.style.left = ov.style.left;
+      twin.style.top  = ov.style.top;
+      const cs = getComputedStyle(ov);
+      twin.style.width        = cs.width;
+      twin.style.height       = cs.height;
+      twin.style.borderRadius = cs.borderRadius;
+    });
+  }
+
+previewBtn.addEventListener('click', async ()=>{
+  const {errors, warnings} = validateBeforeGeneratePillows();
+  await new Promise(requestAnimationFrame);
+  syncTwinsWithVisible();
+  await new Promise(requestAnimationFrame);
+  if(errors.length>0){ alert("خطاهای ضروری:- " + errors.join("- ")); return; }
+  if(warnings.length>0){
+    const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):- " + warnings.join("- ") + "ادامهٔ تولید؟");
+    if(!proceed) return;
+  }
+  const {meta, included, metaTxt} = buildPillowsMetaAndFiles();
+  const annotatedBlob = await makeAnnotatedBlobFromDOM();
+  const zip = new JSZip();
+  zip.file('meta.json', JSON.stringify(meta, null, 2));
+  zip.file('meta.txt', metaTxt);
+  if(baseOriginalFile instanceof File){
+    zip.file(meta.files.base_image_raw, baseOriginalFile);
+  }else if(baseImg2 && baseImg2.src){
+    const c2=document.createElement('canvas'); c2.width=baseImg2.naturalWidth||baseImg2.width; c2.height=baseImg2.naturalHeight||baseImg2.height;
+    const k=c2.getContext('2d'); k.drawImage(baseImg2,0,0,c2.width,c2.height);
+    const b=await new Promise(res=>c2.toBlob(res,'image/png',0.92)); if(b) zip.file('base_image_raw.png', b);
+  }
+  if(annotatedBlob) zip.file('base_image_annotated.png', annotatedBlob);
+  for(const it of included){ zip.file(it.id + ext(it.file.name), it.file); }
+  const out = await zip.generateAsync({type:'blob'});
+  downloadBlob(out, 'pillows_export_' + tsNow() + '.zip');
+});
 
   // --- Toast helper (pillows) ---
   function showToast(msg){

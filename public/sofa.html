@@ -84,6 +84,7 @@
   #toast.show{opacity:1}
 
 </style>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -215,6 +216,7 @@
   let fabrics=[];       // each item: { id:number, url:string, quality:'standard'|'high', parts:Set<string> }
   let assigned={back:null,seat:null,arms:null}; // which fabric id currently owns each part (or null)
   let idx=0;            // index of "current" fabric being edited
+  let sofaBaseFile=null; // keep original base sofa File for export
 
   // Helper: set <img>.src with a Blob URL; revoke URL after load to avoid leaks
   function loadImage(el,file){
@@ -302,9 +304,7 @@
   });
 
   // Stage 1: selecting the base sofa image enables Continue after load
-  sofaFile.addEventListener('change', e=>{
-    const f=e.target.files?.[0]; if(!f) return;
-    sofaChosen=true;
+  sofaFile.addEventListener('change', e=>{ const f=e.target.files?.[0]; if(!f) return; sofaChosen=true; sofaBaseFile=f;
     toFabricsBtn.disabled=false;
     sofaThumb.innerHTML='<img>';
     loadImage(sofaThumb.firstElementChild,f);
@@ -316,9 +316,7 @@
   toFabricsBtn.addEventListener('click', ()=>{ if(!sofaChosen) return; gotoFabrics(); });
 
   // Fabric image selection for current fabric idx
-  function setFabricFromFile(file){
-    const url=URL.createObjectURL(file);
-    fabrics[idx].url=url;
+  function setFabricFromFile(file){ const url=URL.createObjectURL(file); fabrics[idx].url=url; fabrics[idx].file=file;
     fabImg.src=url;
     updateUI();
   }
@@ -405,7 +403,8 @@
           [...f.parts].forEach(p=>assigned.add(p));
         }
       });
-      const missing = required.filter(p=>!assigned.has(p));
+
+  const missing = required.filter(p=>!assigned.has(p));
       if(missing.length>0){
         const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
         warnings.push("برخی بخش‌های مبل بدون پارچه باقی می‌مانند: " + missing.map(m=>partsFa[m]).join("، "));
@@ -415,25 +414,100 @@
     return {errors, warnings};
   }
 
-  // Replace previous click with validation flow
-  previewBtn.addEventListener('click', ()=>{
-    const {errors, warnings} = validateBeforeGenerateSofa();
 
+// --- Dev-save helpers (ZIP) ---
+  function tsNow(){
+    const p = new Date();
+    const z = n=>String(n).padStart(2,'0');
+    return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
+  }
+  function ext(name){ const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png'; }
+  function downloadBlob(blob, filename){
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
+  }
+  function buildSofaMetaAndFiles(){
+    const qBtn = qToggle.querySelector('.active');
+    const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+    const included = [];
+    const excluded = [];
+    fabrics.forEach((f,fi)=>{
+      const id = `fabric_${String(fi+1).padStart(2,'0')}`;
+      const hasFile = !!f.file;
+      const partsList = f.parts ? Array.from(f.parts) : [];
+      if(hasFile && partsList.length>0){
+        included.push({ id, parts: partsList, file: f.file });
+      }else{
+        const reason = !hasFile ? 'no image' : 'no parts';
+        excluded.push({ id, reason });
+      }
+    });
+    const meta = {
+      mode: 'sofa',
+      quality,
+      fabrics: included.map(x=>({id:x.id, parts:x.parts})),
+      excluded,
+      files: {
+        base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
+        fabrics: included.map(x=> x.id + ext(x.file.name))
+      }
+    };
+    const lines = [];
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+    lines.push('=== HEADER ===');
+    lines.push('mode: sofa');
+    lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
+    lines.push(`quality: ${quality}`);
+    lines.push('');
+    lines.push('=== INCLUDED FABRICS ===');
+    if(included.length===0){ lines.push('(none)'); }
+    included.forEach(x=>{
+      lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
+      lines.push(`  sofa.parts: [${x.parts.join(', ')}]`);
+    });
+    lines.push('');
+    lines.push('=== EXCLUSIONS (NOT SENT) ===');
+    if(excluded.length===0){ lines.push('(none)'); }
+    excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
+    lines.push('');
+    lines.push('=== FILES IN THIS EXPORT ===');
+    if(sofaBaseFile) lines.push(`- ${'base_image'+ext(sofaBaseFile.name)}`);
+    included.forEach(x=> lines.push(`- ${x.id+ext(x.file.name)}`));
+    return {meta, included, metaTxt: lines.join('\n'), quality};
+  }
+    
+
+      
+  // Replace previous click with validation flow
+  
+  previewBtn.addEventListener('click', async ()=>{
+    const {errors, warnings} = validateBeforeGenerateSofa();
     if(errors.length>0){
-      alert("خطاهای ضروری:\n- " + errors.join("\n- "));
+      alert("خطاهای ضروری:- " + errors.join("- "));
       return;
     }
-
     if(warnings.length>0){
-      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):\n- " + warnings.join("\n- ") + "\n\nادامهٔ تولید؟");
+      const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):- " + warnings.join("- ") + "ادامهٔ تولید؟");
       if(!proceed) return;
     }
-
-    const q=fabrics[idx].quality||'standard';
-    alert(`(دمو) پیش‌نمایش مبل — پارچه ${idx+1} — کیفیت: ${q}`);
+    const {meta, included, metaTxt} = buildSofaMetaAndFiles();
+    const zip = new JSZip();
+    zip.file('meta.json', JSON.stringify(meta, null, 2));
+    zip.file('meta.txt', metaTxt);
+    if(sofaBaseFile){
+      const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
+      zip.file(baseName, sofaBaseFile);
+    }
+    for(const it of included){
+      zip.file(it.id + ext(it.file.name), it.file);
+    }
+    const blob = await zip.generateAsync({type:'blob'});
+    downloadBlob(blob, 'sofa_export_' + tsNow() + '.zip');
   });
-
-  // --- Toast helper (sofa) ---
+    // --- Toast helper (sofa) ---
   function showToast(msg){
     const t=document.getElementById('toast'); if(!t) return;
     t.textContent=msg; t.classList.add('show');
