@@ -474,10 +474,14 @@ function handleNextBtnClick(){
 // Add a new fabric slot (up to 3). Starts empty (no image, no parts).
 function handleAddBtnClick(){
   if(addBtn.disabled) return;
+  // Start fresh: clear file inputs so the next pick always fires 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
   fabrics.push({id:fabrics.length, url:'', quality:'standard', parts:new Set()});
   idx = fabrics.length-1;
   updateUI();
 }
+
 
 // Stage 1: selecting the base sofa image enables Continue after load
 function handleSofaFileChange(e){
@@ -501,20 +505,29 @@ function handleToFabricsClick(){
 
 // Fabric image selection for current fabric idx
 function setFabricFromFile(file){
+  // Revoke previous object URL (if any) to avoid leaks
+  if (fabrics[idx]?.url) try{ URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
   const url = URL.createObjectURL(file);
   fabrics[idx].url = url;
   fabrics[idx].file = file;
   fabImg.src = url;
   updateUI();
 }
+
 function handleFabFileChange(e){
   const f=e.target.files?.[0]; if(!f) return;
   setFabricFromFile(f);
+  // Reset input so selecting the same file triggers 'change' in Chrome/Edge
+  e.target.value = "";
 }
+
 function handleFabCamChange(e){
   const f=e.target.files?.[0]; if(!f) return;
   setFabricFromFile(f);
+  // Reset input so selecting the same capture triggers 'change' in Chrome/Edge
+  e.target.value = "";
 }
+
 
 // Quality toggle: per-fabric (standard/high) — UI only
 function handleQToggleClick(e){
@@ -574,11 +587,17 @@ async function handlePreviewClick(){
 
 // Remove current fabric (clears image + parts, reorders, selects next)
 function handleRemoveFabricClick(){
+  // Clear file inputs so re-selecting the same file triggers 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
+
   if(!fabrics[idx]) return;
   const removedIndex = idx;
   const removedId = fabrics[idx].id;
 
-  // Clear assignments owned by this fabric
+  // Revoke object URL to free memory
+  try{ if(fabrics[idx].url) URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
+// Clear assignments owned by this fabric
   parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
 
   // Remove fabric slot

@@ -251,6 +251,8 @@ function loadBase(file){
 }
 
 function setFabricFromFile(file){
+  // Revoke previous object URL (if any) to avoid leaks
+  if (fabrics[i]?.url) try{ URL.revokeObjectURL(fabrics[i].url); }catch(e){}
   const url = URL.createObjectURL(file);
   fabrics[i].url  = url;
   fabrics[i].file = file;
@@ -258,6 +260,7 @@ function setFabricFromFile(file){
   fabMini.style.visibility='visible';
   redraw(); updateUI();
 }
+
 
 function toFabs(){
   stepUpload.classList.remove('active');
@@ -581,12 +584,15 @@ function handlePrevBtnClick(){ if(i>0){ i--; updateUI(); } else { toUpload(); } 
 function handleNextBtnClick(){ if(i<fabrics.length-1){ i++; updateUI(); } }
 
 // Fabric asset selection for current fabric
-function handleFabFileChange(e){ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); }
-function handleFabCamChange(e){  const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); }
+function handleFabFileChange(e){ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); e.target.value=''; }
+function handleFabCamChange(e){  const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); e.target.value=''; }
 
 // Add new fabric slot (up to 3)
 function handleAddBtnClick(){
   if(addBtn.disabled) return;
+  // Start fresh: clear file inputs so the next pick always fires 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
   fabrics.push({id:fabrics.length,url:'',quality:'standard',tags:[]});
   i=fabrics.length-1; updateUI();
 }
@@ -656,6 +662,12 @@ async function handlePreviewClick(){
 
 // Remove current fabric (clears image + tags, reorders, selects next)
 function handleRemoveFabricClick(){
+  // Clear file inputs to ensure same-file re-pick triggers 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
+  // Revoke URL (if present) to free memory
+  try{ if(fabrics[i]?.url) URL.revokeObjectURL(fabrics[i].url); }catch(e){}
+
   if(!fabrics[i]) return;
   const removedIndex = i;
 
