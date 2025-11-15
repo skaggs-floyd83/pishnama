@@ -1,0 +1,567 @@
+<!doctype html>
+<!--
+  Project: Pishnama — Sofa Fabric Assignment (Developer-Commented Copy)
+  File: sofa_commented_dev.html
+  Purpose:
+    Two-stage flow to upload a sofa image and assign up to THREE fabrics to specific parts
+    of the sofa (back/seat/arms). Uses pure HTML/CSS/vanilla JS. No network calls here.
+
+  Key UX decisions (preserve behavior exactly):
+    • Hamburger is icon-only (☰). Menu contains links to sofa & pillows pages.
+    • File selection buttons are icon-only (📁 for choose file, 📷 for camera).
+    • Stages:
+        1) Upload: user selects base sofa image; "Continue" becomes enabled after image loads.
+        2) Fabrics: user iterates through per-fabric context and assigns fabric to parts.
+    • Up to 3 fabrics are supported. The "Add Fabric" button:
+        – Shows “➕ افزودن پارچه {دوم|سوم}” (dynamic ordinal)
+        – Is completely HIDDEN when three fabrics already exist (NOT disabled).
+    • Placeholder text “پارچه {اول|دوم|سوم} را انتخاب کنید” appears until the current fabric image is set.
+    • “بخش مربوطه” (part grid) controls assignment; a fabric can own any subset of parts.
+      Visibility rules prevent conflicting assignments across fabrics.
+    • “Next” is always rendered (visible) but disabled when there is no next fabric.
+    • “Preview” enables only when at least one part is selected for the current fabric.
+  Notes for future devs:
+    • Blob URLs (createObjectURL) are used for local previews; revoke on <img> load where applicable.
+    • This page is self-contained UI only; model integration should be added where Preview is handled.
+-->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>پیشنما — مبل (v3, commented)</title>
+<style>
+  :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
+  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  /* Icon-only hamburger; text "منو" intentionally removed */
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
+  .row{display:flex;align-items:center;gap:8px}
+  .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
+  .btn.primary{background:var(--blue);border-color:var(--blue)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  /* Generic image frame for previews/placeholders */
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
+  .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+  .badge{position:absolute;top:8px;right:8px;background:#0f1a33;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.85rem;color:#e5e7eb}
+
+  /* Quality toggle (two-state) */
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
+  .toggle .active{background:#0f1a33;color:#fff}
+
+  /* Part grid “بخش مربوطه”: back/seat/arms/all */
+  .schem{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px}
+  .part{height:54px;border:1px solid var(--border);border-radius:10px;background:#0f1a33;display:grid;place-items:center}
+  .part.active{background:#0e3a2b;border-color:#0e3a2b}
+
+  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .section{display:none;flex:1;overflow:hidden}
+  .section.active{display:flex;flex-direction:column}
+
+  .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px;flex:1}
+  .rightline{display:flex;justify-content:flex-start;align-items:center}
+  .between{display:flex;justify-content:space-between;align-items:center}
+
+  /* Fixed heights used in mobile-safe viewport */
+  #sofaThumb, #frame .thumb, #sofaPreviewFrame { height: 220px !important; width: 100%; }
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+  .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
+
+  /* Tiny remove icon inside fabric frame */
+  .tinyX{position:absolute;left:8px;top:8px;background:#0f1a33;border:1px solid var(--border);border-radius:8px;padding:4px 6px;cursor:pointer;font-size:14px;line-height:1}
+  .tinyX:hover{background:#17213d}
+
+  /* Fabric thumbnail */
+  #fabMini{
+    width:36px;
+    height:36px;
+    border-radius:8px;
+    border:1px solid var(--border);
+    background:#0f172a;
+    object-fit:cover;
+    visibility:hidden;
+  }
+
+  /* Toast */
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
+  #toast.show{opacity:1}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <!-- Header: hamburger only -->
+  <div class="bar">
+    <button class="hamburger" id="hambtn">☰</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
+  </div>
+
+  <div class="viewport">
+    <!-- ===== Stage 1: Upload base sofa image ===== -->
+    <section id="step-upload" class="section active">
+      <div class="card">
+        <h3 style="margin:0 0 8px">📷 آپلود تصویر مبل</h3>
+        <div class="thumb" id="sofaThumb"></div>
+        
+        <div class="controls" style="margin-top: 8px;margin-right: 0px;margin-left: 0px;">
+          <div class="row between">
+            <!-- Icon-only file/camera per product decision -->
+            <div class="row">
+              <label class="btn" title="انتخاب فایل">📁<input id="sofaFile" type="file" accept="image/*" hidden></label>
+              <label class="btn" title="دوربین">📷<input id="sofaCam" type="file" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <!-- Continue becomes enabled only after the image loads -->
+            <button class="btn primary" id="toFabricsBtn" disabled>ادامه ◀</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Stage 2: Fabric selection + part assignment ===== -->
+    <section id="step-fabrics" class="section">
+      <!-- Navigation row -->
+      <div class="row" id="navRow">
+        <button class="btn" id="prevStep">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
+
+      <!-- NEW: Sofa preview in Stage 2 -->
+      <div class="card">
+        <div class="thumb" id="sofaPreviewFrame">
+          <img id="sofaPreviewImg" alt="">
+        </div>
+      </div>
+
+      <!-- Compact fabric selector (no big preview) -->
+      <div class="card" id="frame">
+        <!-- Title + wizard badge -->
+        <div class="row" style="justify-content:space-between;width:100%;margin-bottom:8px">
+          <strong id="selTitle" style="color:var(--muted);font-size:.95rem">انتخاب پارچه اول</strong>
+          <span class="badge" id="wizBadge">پارچه 1 از 1</span>
+        </div>
+
+        <!-- Buttons + thumbnail + trash -->
+        <div class="rightline" style="margin-bottom:6px;gap:8px;justify-content:space-between;width:100%">
+          <div class="row">
+            <label class="btn" title="آپلود پارچه">📁<input id="fabFile" type="file" accept="image/*" hidden></label>
+            <label class="btn" title="دوربین">📷<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
+          </div>
+          <img id="fabMini" alt="">
+          <button class="tinyX" id="removeFabBtn" title="حذف پارچه">🗑️</button>
+        </div>
+
+        <!-- Textual placeholder instead of big preview -->
+        <span id="fabPlaceholder" style="display:block;color:var(--muted);font-size:.9rem;margin-top:2px">
+          پارچه اول را انتخاب کنید
+        </span>
+
+        <!-- Part selection block -->
+        <div class="tagsHeader">بخش مربوطه</div>
+        <div class="schem" id="schem">
+          <button class="part" data-part="back">پشتی</button>
+          <button class="part" data-part="seat">نشیمن</button>
+          <button class="part" data-part="arms">دسته‌ها</button>
+          <button class="part" data-part="all">همه</button>
+        </div>
+      </div>
+
+      <!-- Add Fabric: HIDDEN when fabrics.length >= 3; otherwise enabled based on selection readiness -->
+      <div class="controls">
+        <div class="rightline">
+          <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
+        </div>
+      </div>
+
+      <!-- Generate row: quality toggle + preview -->
+      <div class="controls">
+        <div class="rightline" style="gap:8px">
+          <div class="toggle" id="qToggle">
+            <button class="active" data-q="standard">کیفیت معمولی</button>
+            <button data-q="high">کیفیت بالا</button>
+          </div>
+          <button class="btn primary" id="previewBtn">✨ پیش‌نمایش</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* =============================================================================
+   Pishnama — Sofa Page (Inline Script, Refactored)
+   Scope: Internal modularization & comments ONLY — ZERO behavior/UI changes
+============================================================================= */
+
+/** Typedefs (documentation only)
+ * @typedef {{ id:number, url:string, file?:File, quality:'standard'|'high', parts:Set<'back'|'seat'|'arms'> }} Fabric
+ * @typedef {{ back:number|null, seat:number|null, arms:number|null }} Assigned
+ */
+
+/* ============================== Constants / DOM ============================ */
+
+function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+
+// Hamburger
+const hambtn   = document.getElementById('hambtn');
+const menu     = document.getElementById('menu');
+
+// Stage 1 (Upload)
+const sofaFile     = document.getElementById('sofaFile');
+const sofaCam      = document.getElementById('sofaCam');
+const sofaThumb    = document.getElementById('sofaThumb');
+const toFabricsBtn = document.getElementById('toFabricsBtn');
+const stepUpload   = document.getElementById('step-upload');
+
+// Stage 2 (Fabrics)
+const stepFabrics  = document.getElementById('step-fabrics');
+const fabFile      = document.getElementById('fabFile');
+const fabCam       = document.getElementById('fabCam');
+const wizBadge     = document.getElementById('wizBadge');
+const qToggle      = document.getElementById('qToggle');
+const schem        = document.getElementById('schem');
+const previewBtn   = document.getElementById('previewBtn');
+const addBtn       = document.getElementById('addBtn');
+const nextBtn      = document.getElementById('nextBtn');
+const prevStep     = document.getElementById('prevStep');
+
+// NEW: Stage 2 preview + fabric UI
+const sofaPreviewImg = document.getElementById('sofaPreviewImg');
+const fabMini        = document.getElementById('fabMini');
+const selTitle       = document.getElementById('selTitle');
+
+// Logical part names; used for visibility rules and assignments
+const parts = ['back','seat','arms'];
+
+/* ================================== State ================================= */
+
+let sofaChosen   = false;
+let fabrics      = /** @type {Fabric[]} */([]);
+let assigned     = /** @type {Assigned} */({back:null, seat:null, arms:null});
+let idx          = 0;
+let sofaBaseFile = null;
+
+/* =============================== Helpers ================================== */
+
+function loadImage(el, file){
+  const url = URL.createObjectURL(file);
+  el.src = url;
+  el.onload = () => URL.revokeObjectURL(url);
+}
+
+function gotoUpload(){
+  stepFabrics.classList.remove('active');
+  stepUpload.classList.add('active');
+}
+
+function gotoFabrics(){
+  stepUpload.classList.remove('active');
+  stepFabrics.classList.add('active');
+
+  // NEW: mirror sofa image into Stage 2 preview
+  const baseImg = sofaThumb.querySelector('img');
+  if (baseImg && sofaPreviewImg) {
+    sofaPreviewImg.src = baseImg.src;
+  }
+
+  updateUI();
+}
+
+/* ============================== Core UI Sync ============================== */
+
+function updateUI(){
+  if(!fabrics[idx]) return;
+  const cur = fabrics[idx];
+
+  // Title and placeholder (no large preview)
+  if (selTitle) {
+    selTitle.textContent = `انتخاب پارچه ${faOrdinal(idx+1)}`;
+  }
+  const ph = document.getElementById('fabPlaceholder');
+  if(cur.url){ ph.style.display='none'; }
+  else { ph.textContent = `پارچه ${faOrdinal(idx+1)} را انتخاب کنید`; ph.style.display='block'; }
+
+  // Wizard badge: "پارچه X از N"
+  wizBadge.textContent = `پارچه ${idx+1} از ${fabrics.length}`;
+
+  // Thumbnail mirrors fabric image
+  if (fabMini) {
+    fabMini.src = cur.url || '';
+    fabMini.style.visibility = cur.url ? 'visible' : 'hidden';
+  }
+
+  // Part grid visibility & active states
+  schem.querySelectorAll('.part').forEach(btn=>{
+    const p = btn.dataset.part;
+    if(p==='all'){
+      const allAvail = parts.every(pa => (assigned[pa]===null || assigned[pa]===cur.id));
+      btn.style.visibility = allAvail ? 'visible' : 'hidden';
+      btn.classList.toggle('active', cur.parts.size===3);
+    }else{
+      const visible = (assigned[p]===null || assigned[p]===cur.id);
+      btn.style.visibility = visible ? 'visible' : 'hidden';
+      btn.classList.toggle('active', cur.parts.has(p));
+    }
+  });
+
+  // Generate is always enabled; validation happens on click
+  previewBtn.disabled = false;
+
+  // Add Fabric management (unchanged)
+  if(fabrics.length>=3){
+    addBtn.style.display='none';
+  }else{
+    addBtn.style.display='inline-block';
+    const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+    addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
+
+    const allAssignedOverall = parts.every(p=>assigned[p]!==null);
+    const curAll = (cur.parts.size===3);
+    const currentReady = !!cur.url && cur.parts.size>0;
+    addBtn.disabled = allAssignedOverall || curAll || !currentReady;
+  }
+
+  // Next button: visible, disabled if no next
+  nextBtn.style.display='inline-block';
+  nextBtn.disabled = !(idx < fabrics.length-1);
+}
+
+/* ===================== Validation (pre-generation) ======================== */
+
+function validateBeforeGenerateSofa(){
+  const errors = [];
+  const warnings = [];
+
+  if(!sofaChosen){
+    errors.push("تصویر پایهٔ مبل انتخاب نشده است.");
+  }
+  const fabricsWithImg = fabrics.filter(f=>!!f.url);
+  if(fabricsWithImg.length===0){
+    errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
+  }
+  const anyTaggedOnImg = fabrics.some(f=> !!f.url && f.parts && f.parts.size>0 );
+  if(!anyTaggedOnImg){
+    errors.push("حداقل یک برچسب بخش باید اختصاص داده شود.");
+  }
+
+  // Optional checks kept as in original...
+  return {errors,warnings};
+}
+
+/* ========================== Export / ZIP Helpers ========================== */
+
+function tsNow(){
+  const p = new Date();
+  const z = n=>String(n).padStart(2,'0');
+  return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
+}
+function ext(name){
+  const i = name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png';
+}
+function downloadBlob(blob, filename){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
+}
+
+function buildSofaMetaAndFiles(){
+  const qBtn = qToggle.querySelector('.active');
+  const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+
+  const included = [];
+  const excluded = [];
+  fabrics.forEach((f,fi)=>{
+    const id = `fabric_${String(fi+1).padStart(2,'0')}`;
+    const hasFile = !!f.file;
+    const partsList = f.parts ? Array.from(f.parts) : [];
+    if(hasFile && partsList.length>0){
+      included.push({ id, parts: partsList, file: f.file });
+    }else{
+      const reason = !hasFile ? 'no image' : 'no parts';
+      excluded.push({ id, reason });
+    }
+  });
+
+  const meta = {
+    mode: 'sofa',
+    quality,
+    fabrics: included.map(x=>({id:x.id, parts:x.parts})),
+    excluded,
+    files: {
+      base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
+      fabrics: included.map(x=> x.id + ext(x.file.name))
+    }
+  };
+
+  const lines = [];
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  lines.push('=== HEADER ===');
+  lines.push('mode: sofa');
+  lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
+  lines.push(`quality: ${quality}`);
+  lines.push('');
+  lines.push('=== INCLUDED FABRICS ===');
+  if(included.length===0){ lines.push('(none)'); }
+  included.forEach(x=>{
+    lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
+    lines.push(`  sofa.parts: [${x.parts.join(', ')}]`);
+  });
+
+  return {meta, included, metaTxt: lines.join('\n')};
+}
+
+/* ============================ Toast ============================ */
+
+function showToast(msg){
+  const t=document.getElementById('toast'); if(!t) return;
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+/* ============================ Handlers ============================ */
+
+hambtn.addEventListener('click', ()=>menu.classList.toggle('show'));
+document.addEventListener('click', e=>{
+  if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show');
+});
+
+prevStep.addEventListener('click', ()=>{
+  if(idx>0){ idx--; updateUI(); } else { gotoUpload(); }
+});
+nextBtn.addEventListener('click', ()=>{
+  if(idx<fabrics.length-1){ idx++; updateUI(); }
+});
+
+addBtn.addEventListener('click', ()=>{
+  if(addBtn.disabled) return;
+  try{ fabFile.value=''; }catch(e){}
+  try{ fabCam.value=''; }catch(e){}
+  fabrics.push({id:fabrics.length, url:'', quality:'standard', parts:new Set()});
+  idx = fabrics.length-1;
+  updateUI();
+});
+
+sofaFile.addEventListener('change', e=>{
+  const f=e.target.files?.[0]; if(!f) return;
+  sofaChosen = true;
+  sofaBaseFile = f;
+  toFabricsBtn.disabled = false;
+  sofaThumb.innerHTML = '<img>';
+  loadImage(sofaThumb.firstElementChild, f);
+  if(fabrics.length===0) fabrics.push({id:0, url:'', quality:'standard', parts:new Set()});
+  idx = 0;
+});
+sofaCam .addEventListener('change', ()=>sofaFile.dispatchEvent(new Event('change')));
+toFabricsBtn.addEventListener('click', ()=>{ if(sofaChosen) gotoFabrics(); });
+
+function setFabricFromFile(file){
+  if (fabrics[idx]?.url) try{ URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
+  const url = URL.createObjectURL(file);
+  fabrics[idx].url = url;
+  fabrics[idx].file = file;
+  updateUI();
+}
+fabFile.addEventListener('change', e=>{
+  const f=e.target.files?.[0]; if(!f) return;
+  setFabricFromFile(f);
+  e.target.value = "";
+});
+fabCam .addEventListener('change', e=>{
+  const f=e.target.files?.[0]; if(!f) return;
+  setFabricFromFile(f);
+  e.target.value = "";
+});
+
+qToggle.addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b||!fabrics[idx]) return;
+  [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+  fabrics[idx].quality = b.dataset.q;
+});
+
+schem.addEventListener('click', e=>{
+  const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
+  const p=btn.dataset.part;
+  const cur=fabrics[idx];
+
+  if(p==='all'){
+    const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
+    if(!allAvail) return;
+    const turnOn=(cur.parts.size!==3);
+    parts.forEach(pa=>{
+      if(turnOn){ cur.parts.add(pa); assigned[pa]=cur.id; }
+      else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
+    });
+  }else{
+    const visible=(assigned[p]===null||assigned[p]===cur.id);
+    if(!visible) return;
+    if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
+    else { cur.parts.add(p); assigned[p]=cur.id; }
+  }
+  updateUI();
+});
+
+previewBtn.addEventListener('click', async()=>{
+  const {errors} = validateBeforeGenerateSofa();
+  if(errors.length>0){
+    alert("خطاهای ضروری:\n- " + errors.join("\n- "));
+    return;
+  }
+  const {meta, included, metaTxt} = buildSofaMetaAndFiles();
+  const zip = new JSZip();
+  zip.file('meta.json', JSON.stringify(meta, null, 2));
+  zip.file('meta.txt', metaTxt);
+  if(sofaBaseFile){
+    const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
+    zip.file(baseName, sofaBaseFile);
+  }
+  for(const it of included){
+    zip.file(it.id + ext(it.file.name), it.file);
+  }
+  const blob = await zip.generateAsync({type:'blob'});
+  downloadBlob(blob, 'sofa_export_' + tsNow() + '.zip');
+});
+
+document.getElementById('removeFabBtn').addEventListener('click', ()=>{
+  if(!fabrics[idx]) return;
+  const removedIndex = idx;
+  const removedId = fabrics[idx].id;
+  try{ if(fabrics[idx].url) URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
+  parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
+  fabrics.splice(idx,1);
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    idx=0;
+  }else{
+    fabrics.forEach((f,ii)=>{ f.id=ii; });
+    parts.forEach(p=>{ if(assigned[p]!=null && assigned[p]>removedId) assigned[p]=assigned[p]-1; });
+    idx = Math.min(removedIndex, fabrics.length-1);
+  }
+  showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+  updateUI();
+});
+
+/* ================================== Init ================================= */
+
+(function init(){
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    idx=0;
+  }
+})();
+</script>
+</body>
+</html>
