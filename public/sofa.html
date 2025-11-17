@@ -59,15 +59,20 @@
   .toggle .active{background:#0f1a33;color:#fff}
 
   /* Part grid “بخش مربوطه”: back/seat/arms/all */
-  .schem{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px}
+  .schem{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;align-items: center;}
   .part{height:54px;border:1px solid var(--border);border-radius:10px;background:#0f1a33;display:grid;place-items:center}
   .part.active{background:#0e3a2b;border-color:#0e3a2b}
+  /* Keep a visible border when the All Parts tag is selected */
+  .part[data-part="all"].active {
+    border-color: var(--border);   /* same color as unselected state */
+    border-width: 6px;             /* keep your thick border */
+  }
   /* Make "All Parts" slightly wider with a thick border */
   .part[data-part="all"] {
-  padding-inline: 44px;   /* makes it visually wider */
-  border-width: 6px;      /* very thick border */
-}
-
+    height: 68px;        /* instead of the default 54px */
+    padding-inline: 44px;   /* makes it visually wider */
+    border-width: 6px;      /* very thick border */
+  }
 
   .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
   .section{display:none;flex:1;overflow:hidden}
