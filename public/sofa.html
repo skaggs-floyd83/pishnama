@@ -202,7 +202,7 @@
 
 /** ============================================================================
  * Typedefs (documentation only)
- * @typedef {{ id:number, url:string, file?:File, quality:'standard'|'high', parts:Set<'back'|'seat'|'arms'> }} Fabric
+ * @typedef {{ id:number, url:string, file?:File, parts:Set<'back'|'seat'|'arms'> }} Fabric
  * @typedef {{ back:number|null, seat:number|null, arms:number|null }} Assigned
  * ========================================================================== */
 
@@ -245,11 +245,14 @@ const parts = ['back','seat','arms'];
 // Global UI state (no persistence)
 let sofaChosen   = false; // becomes true after an image is picked
 /** @type {Fabric[]} */
-let fabrics      = [];    // each item: { id, url, quality:'standard'|'high', parts:Set<string> }
+let fabrics      = [];    // each item: { id, url, parts:Set<string> }
  /** @type {Assigned} */
 let assigned     = {back:null, seat:null, arms:null}; // which fabric id owns each part (or null)
 let idx          = 0;     // index of "current" fabric being edited
 let sofaBaseFile = null;  // keep original base sofa File for export
+
+// NEW: Global quality setting (standard | high)
+let generationQuality = "standard";
 
 /* =============================== Helpers ================================== */
 
@@ -409,8 +412,9 @@ function downloadBlob(blob, filename){
 
 /** Build meta/files overview WITHOUT side effects (pure builder) */
 function buildSofaMetaAndFiles(){
-  const qBtn = qToggle.querySelector('.active');
-  const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+  // use global quality (no longer read from DOM)
+  const quality = generationQuality;
+
 
   const included = [];
   const excluded = [];
@@ -495,7 +499,7 @@ function handleAddBtnClick(){
   // Start fresh: clear file inputs so the next pick always fires 'change'
   try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
   try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
-  fabrics.push({id:fabrics.length, url:'', quality:'standard', parts:new Set()});
+  fabrics.push({id:fabrics.length, url:'', parts:new Set()});
   idx = fabrics.length-1;
   updateUI();
 }
@@ -510,7 +514,7 @@ function handleSofaFileChange(e){
   sofaThumb.innerHTML = '<img>';
   loadImage(sofaThumb.firstElementChild, f);
   if(baseImg2){ loadImage(baseImg2, f); }
-  if(fabrics.length===0) fabrics.push({id:0, url:'', quality:'standard', parts:new Set()});
+  if(fabrics.length===0) fabrics.push({id:0, url:'', parts:new Set()});
   idx = 0;
 }
 // Camera mirrors file selection
@@ -548,12 +552,18 @@ function handleFabCamChange(e){
 }
 
 
-// Quality toggle: per-fabric (standard/high) — UI only
+// Quality toggle: (standard/high) 
 function handleQToggleClick(e){
-  const b=e.target.closest('button'); if(!b||!fabrics[idx]) return;
+  const b = e.target.closest('button');
+  if(!b) return;
+
+  // Update UI active state
   [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
-  fabrics[idx].quality = b.dataset.q;
+
+  // Update global quality state 
+  generationQuality = b.dataset.q;
 }
+
 
 // Part assignment rules (see original comments)
 function handleSchemClick(e){
@@ -637,7 +647,7 @@ function handleRemoveFabricClick(){
   fabrics.splice(idx,1);
 
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    fabrics.push({id:0,url:'', parts:new Set()});
     idx=0;
   }else{
     // Reindex ids
@@ -691,7 +701,7 @@ previewBtn.addEventListener('click', handlePreviewClick);
 // Ensure we start with an empty fabric slot if needed
 (function init(){
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'',quality:'standard',parts:new Set()});
+    fabrics.push({id:0,url:'', parts:new Set()});
     idx=0;
   }
   // Do not call updateUI() here to avoid any visual flicker before user input.
