@@ -520,7 +520,10 @@ function handleSofaFileChange(e){
   sofaThumb.innerHTML = '<img>';
   loadImage(sofaThumb.firstElementChild, f);
   if(baseImg2){ loadImage(baseImg2, f); }
-  if(fabrics.length===0) fabrics.push({id:0, url:'', parts:new Set()});
+  if(fabrics.length===0) {
+    fabrics.push({id:0, url:'', parts:new Set(['back','seat','arms'])});
+    assigned = {back:0, seat:0, arms:0};
+  }
   idx = 0;
 }
 // Camera mirrors file selection
@@ -707,7 +710,8 @@ previewBtn.addEventListener('click', handlePreviewClick);
 // Ensure we start with an empty fabric slot if needed
 (function init(){
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'', parts:new Set()});
+    fabrics.push({id:0,url:'', parts:new Set(['back','seat','arms'])});
+    assigned = {back:0, seat:0, arms:0};
     idx=0;
   }
   // Do not call updateUI() here to avoid any visual flicker before user input.
