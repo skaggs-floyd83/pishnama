@@ -159,10 +159,11 @@
           <div>
             <div class="tagsHeader" style="margin-top:0">بخش مربوطه</div>
             <div class="schem" id="schem">
+              <button class="part" data-part="all">همه</button>
               <button class="part" data-part="back">پشتی</button>
               <button class="part" data-part="seat">نشیمن</button>
               <button class="part" data-part="arms">دسته‌ها</button>
-              <button class="part" data-part="all">همه</button>
+              
             </div>
           </div>
         </div>
@@ -569,6 +570,20 @@ function handleSchemClick(e){
       else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
     });
   }else{
+
+    // If user clicks an individual part while "all" is active:
+    // we must turn off "all" and activate only that specific part.
+    if (cur.parts.size === 3 && p !== "all") {
+      parts.forEach(pa => cur.parts.delete(pa)); // clear all
+      cur.parts.add(p);                          // activate selected one
+      // update assigned:
+      parts.forEach(pa => { if (assigned[pa] === cur.id) assigned[pa] = null; });
+      assigned[p] = cur.id;
+      updateUI();
+      return;
+    }
+
+
     const visible=(assigned[p]===null||assigned[p]===cur.id);
     if(!visible) return;
     if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
