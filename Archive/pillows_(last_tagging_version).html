@@ -1,0 +1,754 @@
+<!doctype html>
+<!--
+  Project: Pishnama — Pillows Fabric Tagging (Developer-Commented Copy)
+  File: pillows_commented_dev.html
+  Purpose:
+    Two-stage flow to upload a sofa+pillows image, then tag pillow locations per fabric
+    and generate previews using up to THREE fabrics. Pure HTML/CSS/vanilla JS. No network calls here.
+
+  Key UX decisions (preserve behavior exactly):
+    • Hamburger is icon-only (☰). Menu links to sofa & pillows pages.
+    • File selection buttons are icon-only (📁 for choose file, 📷 for camera).
+    • Stages:
+        1) Upload: user selects base photo; Continue enabled after image loads.
+        2) Fabrics: fabric-specific tagging — each fabric has its own set of tag points.
+    • Overlay tags are fabric swatch squares (NO numbers/circles), positioned absolutely with normalized coords.
+    • Selection frame:
+        – Title “انتخاب پارچه {اول|دوم|سوم}” gets its own line (top-right).
+        – Buttons (file/camera) are on the next line, right-aligned; thumbnail sits at the left.
+    • Add Fabric button:
+        – Label updates to next ordinal (دوم / سوم).
+        – Completely HIDDEN when three fabrics already exist (not disabled).
+        – Enabled only when current fabric has an image AND at least one tag point.
+    • Undo (↩) removes the last tag of the CURRENT fabric only; Clear (🗑️) removes all tags of current fabric.
+    • Mobile persistence: base image Blob URL is carried from stage 1 to stage 2 to ensure visibility after step change.
+-->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>پیشنما — کوسن‌ها (v3, commented)</title>
+<style>
+  :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
+  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+  .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
+  /* Icon-only hamburger */
+  .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
+  .menu{position:absolute;top:48px;right:14px;background:#0f162b;border:1px solid var(--border);border-radius:12px;min-width:180px;display:none;flex-direction:column;overflow:hidden;z-index:10}
+  .menu a{padding:10px 12px;color:#e5e7eb;text-decoration:none;border-bottom:1px solid var(--border);display:block}
+  .menu a:last-child{border-bottom:0}
+  .menu.show{display:flex}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin:10px}
+  .row{display:flex;align-items:center;gap:8px}
+  .btn{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:12px;padding:10px 14px;cursor:pointer}
+  .btn.primary{background:var(--blue);border-color:var(--blue)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
+  .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
+  .toggle .active{background:#0f1a33;color:#fff}
+
+  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .section{display:none;flex:1;overflow:hidden}
+  .section.active{display:flex;flex-direction:column}
+
+  #baseFrame, #tagFrame { height: 220px !important; width: 100%; }
+  #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
+  .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px}
+  .rightline{display:flex;justify-content:flex-start;align-items:center;gap:8px}
+  .between{display:flex;justify-content:space-between;align-items:center}
+
+  /* Selection frame with two rows: (1) title line, (2) buttons+thumb line */
+  .selectFrame{border:1px dashed var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;flex-direction:column;gap:10px;position:relative}
+
+  /* Fabric-tag overlays: 16×16 swatches; background image = fabric */
+  .overlay{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;border:1px solid var(--accent);background-size:cover;background-position:center}
+  .overlay.dragEnabled.dragActive { cursor: -webkit-grab; cursor: grab; }
+  .overlay.dragEnabled.dragActive:active { cursor: -webkit-grabbing; cursor: grabbing; }
+
+  /* Tiny remove icon inside fabric selection frame */
+  .tinyX{position:absolute;left:8px;top:8px;background:#0f1a33;border:1px solid var(--border);border-radius:8px;padding:4px 6px;cursor:pointer;font-size:14px;line-height:1}
+  .tinyX:hover{background:#17213d}
+  /* Toast */
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
+  #toast.show{opacity:1}
+
+  .overlay-annot{position:absolute;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:4px;opacity:0;pointer-events:none}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <!-- Header: hamburger only -->
+  <div class="bar">
+    <button class="hamburger" id="hambtn">☰</button>
+    <div class="menu" id="menu">
+      <a href="sofa.html">🛋️ طراحی مبل</a>
+      <a href="pillows.html">🛋️ طراحی کوسن‌ها</a>
+    </div>
+  </div>
+
+  <div class="viewport">
+    <!-- ===== Stage 1: Upload sofa + pillows image ===== -->
+    <section id="step-upload" class="section active">
+      <div class="card">
+        <h3 style="margin:0 0 8px">📷 آپلود تصویر "مبل و کوسن‌ها"</h3>
+        <div class="thumb" id="baseFrame"><!-- Keep base image visible after Next (mobile) -->
+          <!-- <span class="hint">هنوز تصویری انتخاب نشده</span> -->
+          <img id="baseImg" alt="">
+        </div>
+        <div class="row between" style="margin-top:8px">
+          <!-- Match sofa page layout: file+camera (right), Continue (left) -->
+          <div class="row">
+            <label class="btn" title="انتخاب فایل">📁<input id="photoFile" type="file" accept="image/*" hidden></label>
+            <label class="btn" title="دوربین">📷<input id="photoCam" type="file" accept="image/*" capture="environment" hidden></label>
+          </div>
+          <button class="btn primary" id="goNext" disabled>ادامه ◀</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Stage 2: Tag pillows + choose fabrics ===== -->
+    <section id="step-fabrics" class="section">
+      <div class="row" id="navRow">
+        <button class="btn" id="prevBtn">قبلی ▶</button>
+        <button class="btn" id="nextBtn">◀ بعدی</button>
+      </div>
+
+      <div class="card">
+        <!-- Icon-only controls centered above the image -->
+        <div class="row" style="justify-content:right;gap:8px;margin-bottom:8px">
+          
+          <button class="btn" id="clearBtn" title="پاک‌سازی همه">
+          <svg width="13" height="15" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"
+          style="vertical-align:middle;">
+          <!-- Proper bent circular arrows (monochrome 🔄) -->
+          <polyline points="1 4 1 10 7 10"></polyline>
+          <polyline points="23 20 23 14 17 14"></polyline>
+          <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"></path>
+          <path d="M3.51 15A9 9 0 0 0 18.36 18.36L23 14"></path>
+        </svg>
+        </button>
+        <button class="btn" id="undoBtn" title="واگرد">↩</button>
+
+
+          
+        </div>
+        <!-- Tagging frame: overlays are small fabric swatches -->
+        <div class="thumb" id="tagFrame" style="position:relative"><img id="baseImg2" alt=""></div>
+      </div>
+
+      <!-- Fabric selection frame: title line + buttons/thumbnail line -->
+      <div class="controls">
+        <div class="selectFrame">
+          <button class="tinyX" id="removeFabBtn" title="حذف پارچه">🗑️</button>
+          <div class="row" style="justify-content:flex-start;width:100%">
+            <strong id="selTitle" style="color:var(--muted);font-size:.95rem">انتخاب پارچه اول</strong>
+          </div>
+          <div class="row" style="justify-content:space-between;width:100%">
+            <div class="rightline">
+              <label class="btn" title="آپلود پارچه">📁<input id="fabFile" type="file" accept="image/*" hidden></label>
+              <label class="btn" title="دوربین">📷<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <img id="fabMini" alt="" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);object-fit:cover;background:#0f172a;visibility:hidden">
+          </div>
+        </div>
+
+        <!-- Add Fabric: HIDDEN at 3 fabrics. Enabled only when current fabric has image + ≥1 tag -->
+        <div class="rightline">
+          <button class="btn" id="addBtn" disabled>➕ افزودن پارچه دوم</button>
+        </div>
+
+        <!-- Quality & Preview (integration point) -->
+        <div class="rightline">
+          <div class="toggle" id="qToggle">
+            <button class="active" data-q="standard">کیفیت معمولی</button>
+            <button data-q="high">کیفیت بالا</button>
+          </div>
+          <button class="btn primary" id="previewBtn">✨ پیش‌نمایش</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* =============================================================================
+   Pishnama — Pillows Page (Inline Script, Refactored)
+   Scope: Internal modularization & comments ONLY — ZERO behavior/UI changes
+   Notes:
+     - Public IDs/classes and Persian text are untouched.
+     - Structure: Typedefs → Constants/DOM → State → Helpers → Core UI Sync
+                  → Overlay/Rendering → Validation/Export → Handlers
+                  → Event Bindings → Init
+============================================================================= */
+
+/** ============================================================================
+ * Typedefs (documentation only)
+ * @typedef {{ id:number, url:string, file?:File, quality:'standard'|'high', tags:Array<{id:number,x:number,y:number}> }} Fabric
+ * ========================================================================== */
+
+/* ============================== Constants / DOM ============================ */
+
+// Persian ordinals for labels
+function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
+
+// Hamburger
+const hambtn    = document.getElementById('hambtn');
+const menu      = document.getElementById('menu');
+
+// Stage 1 elements
+const stepUpload = document.getElementById('step-upload');
+const stepFabs   = document.getElementById('step-fabrics');
+const photoFile  = document.getElementById('photoFile');
+const photoCam   = document.getElementById('photoCam');
+const baseImg    = document.getElementById('baseImg');
+const baseImg2   = document.getElementById('baseImg2');
+const goNext     = document.getElementById('goNext');
+
+// Stage 2 elements
+const tagFrame   = document.getElementById('tagFrame');
+const prevBtn    = document.getElementById('prevBtn');
+const nextBtn    = document.getElementById('nextBtn');
+const undoBtn    = document.getElementById('undoBtn');
+const clearBtn   = document.getElementById('clearBtn');
+const fabFile    = document.getElementById('fabFile');
+const fabCam     = document.getElementById('fabCam');
+const addBtn     = document.getElementById('addBtn');
+const qToggle    = document.getElementById('qToggle');
+const previewBtn = document.getElementById('previewBtn');
+const fabMini    = document.getElementById('fabMini');
+
+/* ================================== State ================================= */
+
+// Per-fabric state model:
+//   fabrics[i] owns: url (image), quality flag, and its own list of tag points [{x,y}] in normalized coords (0..1)
+ /** @type {Fabric[]} */
+let fabrics = [];
+let i = 0;                 // current fabric index being edited
+let draggingTag = null;    // {el:HTMLElement, pointerId:number}
+let baseOriginalFile = null;
+let nextMarkerId = 1;
+
+let photoOk = false;
+let baseObjectURL = null;  // persisted blob URL across steps (fixes mobile issue where image would disappear)
+
+/* =============================== Helpers ================================== */
+
+/** Create & persist a blob URL for stage 1; do NOT revoke until replaced (we reuse it in stage 2) */
+function loadBase(file){
+  baseOriginalFile = file;
+  if(baseObjectURL){ URL.revokeObjectURL(baseObjectURL); baseObjectURL=null; }
+  baseObjectURL = URL.createObjectURL(file);
+  baseImg.src = baseObjectURL;
+}
+
+function setFabricFromFile(file){
+  // Revoke previous object URL (if any) to avoid leaks
+  if (fabrics[i]?.url) try{ URL.revokeObjectURL(fabrics[i].url); }catch(e){}
+  const url = URL.createObjectURL(file);
+  fabrics[i].url  = url;
+  fabrics[i].file = file;
+  fabMini.src = url;
+  fabMini.style.visibility='visible';
+  redraw(); updateUI();
+}
+
+
+function toFabs(){
+  stepUpload.classList.remove('active');
+  stepFabs.classList.add('active');
+  // keep same base image in stage 2
+  baseImg2.src = baseObjectURL || baseImg.src;
+  ensureFirstFabric();
+  updateUI();
+}
+function toUpload(){
+  stepFabs.classList.remove('active');
+  stepUpload.classList.add('active');
+}
+function ensureFirstFabric(){
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',tags:[]}); i=0;
+  }
+}
+function selectionDone(cur){ return !!cur && !!cur.url && cur.tags.length>0; }
+
+/* ============================== Core UI Sync ============================== */
+/*
+  Responsibilities:
+    1) Prev/Next enablement
+    2) Add Fabric: show/hide + label + enablement rules
+    3) Preview gating (validation happens on click)
+    4) Title ordinal + thumbnail visibility
+*/
+function updateUI(){
+  const cur = fabrics[i];
+
+  // Prev/Next
+  prevBtn.disabled = false;
+  nextBtn.disabled = (i>=fabrics.length-1);
+
+  // Add Fabric: hide at THREE fabrics; else show with next ordinal; enabled only when current selection is done
+  if(fabrics.length>=3){
+    addBtn.style.display='none';
+  }else{
+    addBtn.style.display='inline-block';
+    addBtn.disabled = !selectionDone(cur);
+    const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+    addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
+  }
+
+  // Generate is always enabled; validation happens on click
+  previewBtn.disabled = false;
+
+  // Title reflects current fabric’s ordinal
+  const selTitle = document.getElementById('selTitle');
+  if(selTitle) selTitle.textContent = `انتخاب پارچه ${faOrdinal(i+1)}`;
+
+  // Thumbnail mirrors current fabric image
+  if(cur && cur.url){ fabMini.src=cur.url; fabMini.style.visibility='visible'; }
+  else { fabMini.style.visibility='hidden'; }
+
+  updateOverlayCursor();
+}
+
+/** Keep cursor honest: only current fabric's tags show grab hand */
+function updateOverlayCursor(){
+  const nodes = tagFrame.querySelectorAll('.overlay');
+  nodes.forEach(d=>{
+    const own = d.dataset.owner!=null ? Number(d.dataset.owner) : -1;
+    if(own===i && d.classList.contains('dragEnabled')){
+      d.classList.add('dragActive');
+    }else{
+      d.classList.remove('dragActive');
+    }
+  });
+}
+
+/* ============================ Overlay / Rendering ========================= */
+
+/** Create visible marker + hidden twin for export and wire drag behavior */
+function addOverlay(x,y,url,owner,ti){
+  // Visual tag = 16px square carrying the fabric texture
+  const d=document.createElement('div');
+  d.className='overlay';
+  d.style.left=(x*100)+'%';
+  d.style.top=(y*100)+'%';
+  d.style.backgroundImage=`url(${url})`;
+  if(owner!==undefined) d.dataset.owner = owner;
+  if(ti!==undefined)    d.dataset.ti    = ti;
+  d.style.touchAction = 'none';
+
+  // Start drag
+  d.addEventListener('pointerdown', (ev)=>{
+    if(d.dataset.owner!==undefined && Number(d.dataset.owner)!==i) return;
+    ev.stopPropagation();
+    d.setPointerCapture(ev.pointerId);
+    draggingTag = { el:d, pointerId:ev.pointerId };
+  });
+  // Drag move (normalized coords)
+  d.addEventListener('pointermove', (ev)=>{
+    if(!draggingTag || draggingTag.el!==d) return;
+    const r=tagFrame.getBoundingClientRect();
+    let nx = (ev.clientX - r.left) / r.width;
+    let ny = (ev.clientY - r.top)  / r.height;
+    nx = Math.max(0, Math.min(1, nx));
+    ny = Math.max(0, Math.min(1, ny));
+    d.style.left = (nx*100)+'%';
+    d.style.top  = (ny*100)+'%';
+    const ownerIdx = i;
+    const tiIdx = d.dataset.ti!==undefined ? Number(d.dataset.ti) : null;
+    if(tiIdx!==null && fabrics[ownerIdx] && fabrics[ownerIdx].tags[tiIdx]){
+      fabrics[ownerIdx].tags[tiIdx].x = nx;
+      fabrics[ownerIdx].tags[tiIdx].y = ny;
+    }
+  });
+  // Drag end
+  d.addEventListener('pointerup', (ev)=>{
+    if(!draggingTag || draggingTag.el!==d) return;
+    d.releasePointerCapture(ev.pointerId);
+    draggingTag = null;
+    updateOverlayCursor();
+  });
+  d.addEventListener('click', (ev)=> ev.stopPropagation());
+
+  // Enable open-hand hover once user moves mouse a few px
+  (function(){
+    let startX=null, startY=null;
+    const enableAfterMove = (ev)=>{
+      if(startX===null){ startX=ev.clientX; startY=ev.clientY; return; }
+      if(Math.abs(ev.clientX-startX)>5 || Math.abs(ev.clientY-startY)>5){
+        d.classList.add('dragEnabled');
+        if(d.dataset.owner!==undefined && Number(d.dataset.owner)===i){ d.classList.add('dragActive'); }
+        document.removeEventListener('pointermove', enableAfterMove);
+      }
+    };
+    document.addEventListener('pointermove', enableAfterMove);
+  })();
+
+  // Hidden twin for annotated export (exact same geometry), rendered beneath the visible one
+  const a=document.createElement('div');
+  a.className='overlay overlay-annot';
+  a.style.left=d.style.left;
+  a.style.top =d.style.top;
+  if(d.dataset.owner!==undefined) a.dataset.owner = d.dataset.owner;
+  if(d.dataset.ti!==undefined)    a.dataset.ti    = d.dataset.ti;
+  try{
+    const mid=(typeof owner!=='undefined'&&typeof ti!=='undefined'&&fabrics[owner]&&fabrics[owner].tags[ti])?fabrics[owner].tags[ti].id:null;
+    if(mid!=null) a.dataset.mid=String(mid);
+  }catch(_){}
+  tagFrame.appendChild(a);
+  tagFrame.appendChild(d);
+}
+
+/** Rebuild overlays from state */
+function redraw(){
+  tagFrame.querySelectorAll('.overlay, .overlay-annot').forEach(n=>n.remove());
+  fabrics.forEach((f,fi)=> f.tags.forEach((t,ti)=> addOverlay(t.x,t.y,f.url,fi,ti)) );
+  updateOverlayCursor();
+}
+
+/* ===================== Validation (pre-generation) ======================== */
+
+function validateBeforeGeneratePillows(){
+  const errors = [];
+  const warnings = [];
+
+  // --- Mandatory checks ---
+  if(!photoOk || !(baseImg2.src || baseImg.src)){
+    errors.push("تصویر پایهٔ مبل + کوسن‌ها انتخاب نشده است.");
+  }
+  const fabricsWithImg = fabrics.filter(f=>!!f.url);
+  if(fabricsWithImg.length===0){
+    errors.push("حداقل یک تصویر پارچه باید آپلود شود.");
+  }
+  const anyHasTag = fabrics.some(f=> !!f.url && f.tags && f.tags.length>0);
+  if(!anyHasTag){
+    errors.push("حداقل یک برچسب کوسن باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
+  }
+
+  // --- Optional checks ---
+  // A) Fabric images without any tags
+  const imgNoTags = fabrics
+    .map((f,idx)=>({f,idx}))
+    .filter(({f})=> !!f.url && (!f.tags || f.tags.length===0))
+    .map(({idx})=> `پارچه ${faOrdinal(idx+1)}`);
+  if(imgNoTags.length>0){
+    warnings.push("پارچه‌های بدون برچسب کوسن: " + imgNoTags.join("، "));
+  }
+
+  return {errors, warnings};
+}
+
+/* ========================== Export / ZIP Helpers ========================== */
+
+const FAB_COLORS = ['#FF3838','#2A7FFF','#18C13C','#FF8A00','#8A3FFC','#12C2C2','#FF3D9A','#FFCC00'];
+function fabricColor(fi){ return FAB_COLORS[fi % FAB_COLORS.length]; }
+
+function tsNow(){
+  const p=new Date(), z=n=>String(n).padStart(2,'0');
+  return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
+}
+function ext(name){
+  const i=name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png';
+}
+function downloadBlob(blob, filename){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+
+/** Build meta/files overview WITHOUT side effects (pure builder) */
+function buildPillowsMetaAndFiles(){
+  const qBtn = qToggle.querySelector('.active');
+  const quality = (qBtn && qBtn.dataset.q) ? qBtn.dataset.q : 'standard';
+  const included=[]; const excluded=[];
+  fabrics.forEach((f,fi)=>{
+    const id = `fabric_${String(fi+1).padStart(2,'0')}`;
+    const hasFile = !!f.file;
+    const tagsList = Array.isArray(f.tags) ? f.tags.slice() : [];
+    if(hasFile && tagsList.length>0){
+      included.push({ id, ownerIndex: fi, file: f.file, tags: tagsList });
+    }else{
+      excluded.push({ id, reason: !hasFile ? 'no image' : 'no tags' });
+    }
+  });
+  const meta = {
+    mode: 'pillows',
+    quality,
+    fabrics: included.map(x=>({ id:x.id, marker_ids: x.tags.map(t=>t.id) })),
+    excluded,
+    files: {
+      base_image_raw: baseOriginalFile ? 'base_image_raw'+ext(baseOriginalFile.name) : 'base_image_raw.png',
+      base_image_annotated: 'base_image_annotated.png',
+      fabrics: included.map(x=> x.id + ext(x.file.name))
+    }
+  };
+  const lines=[]; const tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'local';
+  lines.push('=== HEADER ==='); lines.push('mode: pillows'); lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`); lines.push(`quality: ${quality}`); lines.push('');
+  lines.push('=== INCLUDED FABRICS ==='); if(included.length===0){ lines.push('(none)'); }
+  included.forEach(x=>{ lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`); lines.push(`  pillows.marker_ids: [${x.tags.map(t=>t.id).join(', ')}]`); });
+  lines.push(''); lines.push('=== EXCLUSIONS (NOT SENT) ==='); if(excluded.length===0){ lines.push('(none)'); }
+  excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
+  lines.push(''); lines.push('=== FILES IN THIS EXPORT ==='); lines.push(meta.files.base_image_raw); lines.push('base_image_annotated.png'); included.forEach(x=> lines.push(x.id+ext(x.file.name)));
+  return {meta, included, metaTxt: lines.join('')};
+}
+
+/** Render a PNG of the annotated base image using the hidden twins for geometry */
+async function makeAnnotatedBlobFromDOM(){
+  const baseEl = baseImg2;
+  const img = new Image();
+  const url = (baseOriginalFile instanceof File) ? URL.createObjectURL(baseOriginalFile) : (baseEl && baseEl.src ? baseEl.src : null);
+  if(!url) return null;
+  await new Promise((res,rej)=>{ img.onload=()=>res(); img.onerror=rej; img.src=url; });
+  const W=img.naturalWidth||img.width, H=img.naturalHeight||img.height;
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const ctx=c.getContext('2d');
+  ctx.drawImage(img,0,0,W,H);
+  const imgRect = baseEl.getBoundingClientRect(); const sx=W/imgRect.width, sy=H/imgRect.height;
+  function rr(ctx,x,y,w,h,r){ const k=Math.min(r,w/2,h/2); ctx.beginPath();
+    ctx.moveTo(x+k,y); ctx.lineTo(x+w-k,y); ctx.quadraticCurveTo(x+w,y,x+w,y+k);
+    ctx.lineTo(x+w,y+h-k); ctx.quadraticCurveTo(x+w,y+h,x+w-k,y+h);
+    ctx.lineTo(x+k,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-k);
+    ctx.lineTo(x,y+k); ctx.quadraticCurveTo(x,y,x+k,y);
+  }
+  document.querySelectorAll('#tagFrame .overlay-annot').forEach(ov=>{
+    const r=ov.getBoundingClientRect(); const owner=Number(ov.dataset.owner); const ti=Number(ov.dataset.ti);
+    const id=(fabrics[owner]&&fabrics[owner].tags&&fabrics[owner].tags[ti])?fabrics[owner].tags[ti].id:null;
+    const color = FAB_COLORS[owner % FAB_COLORS.length];
+    const cx=(r.left+r.width/2 - imgRect.left)*sx, cy=(r.top+r.height/2 - imgRect.top)*sy;
+    const w=r.width*sx, h=r.height*sy;
+    const br=parseFloat(getComputedStyle(ov).borderRadius.split(' ')[0])||4; const rad=Math.min(br*((sx+sy)/2), Math.min(w,h)/2);
+    const x=cx - w/2, y=cy - h/2;
+    ctx.save(); ctx.globalAlpha=0.92; rr(ctx,x,y,w,h,rad); ctx.fillStyle='#181818'; ctx.fill();
+    ctx.lineWidth=3; ctx.shadowColor='rgba(255,255,255,0.9)'; ctx.shadowBlur=2; ctx.strokeStyle=color; ctx.stroke(); ctx.restore();
+    if(id!=null){ ctx.save(); const fontPx=Math.max(10, Math.round(0.6*Math.min(w,h))); ctx.font=`bold ${fontPx}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#FFFFFF'; ctx.fillText(String(id), cx, cy); ctx.restore(); }
+  });
+  return await new Promise(res=> c.toBlob(res,'image/png',0.92));
+}
+
+/** Keep hidden twins aligned with visible overlays */
+function syncTwinsWithVisible(){
+  const frame = document.getElementById('tagFrame');
+  if(!frame) return;
+  const visibles = frame.querySelectorAll('.overlay:not(.overlay-annot)');
+  visibles.forEach(ov=>{
+    const owner = ov.dataset.owner;
+    const ti    = ov.dataset.ti;
+    if(owner===undefined || ti===undefined) return;
+    let twin = frame.querySelector(`.overlay-annot[data-owner="${owner}"][data-ti="${ti}"]`);
+    if(!twin){
+      twin = document.createElement('div');
+      twin.className = 'overlay overlay-annot';
+      twin.dataset.owner = owner;
+      twin.dataset.ti = ti;
+      frame.appendChild(twin);
+    }
+    twin.style.left = ov.style.left;
+    twin.style.top  = ov.style.top;
+    const cs = getComputedStyle(ov);
+    twin.style.width        = cs.width;
+    twin.style.height       = cs.height;
+    twin.style.borderRadius = cs.borderRadius;
+  });
+}
+
+/* ============================ Named Handlers ============================== */
+
+// Hamburger: toggle menu
+function handleHamburgerClick(){ menu.classList.toggle('show'); }
+// Close menu on outside click
+function handleDocumentClick(e){
+  if(!menu.contains(e.target) && e.target!==hambtn) menu.classList.remove('show');
+}
+
+// Stage 1 upload
+function handlePhotoFileChange(e){
+  const f=e.target.files?.[0]; if(!f) return;
+  photoOk=true;
+  loadBase(f);
+  goNext.disabled=true;
+  baseImg.onload = ()=>{ goNext.disabled=false; };
+}
+function handlePhotoCamChange(){ photoFile.dispatchEvent(new Event('change')); }
+function handleGoNextClick(){ if(photoOk) toFabs(); }
+
+// Prev/Next between fabrics; Prev from i==0 returns to stage 1
+function handlePrevBtnClick(){ if(i>0){ i--; updateUI(); } else { toUpload(); } }
+function handleNextBtnClick(){ if(i<fabrics.length-1){ i++; updateUI(); } }
+
+// Fabric asset selection for current fabric
+function handleFabFileChange(e){ const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); e.target.value=''; }
+function handleFabCamChange(e){  const f=e.target.files?.[0]; if(!f) return; setFabricFromFile(f); e.target.value=''; }
+
+// Add new fabric slot (up to 3)
+function handleAddBtnClick(){
+  if(addBtn.disabled) return;
+  // Start fresh: clear file inputs so the next pick always fires 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
+  fabrics.push({id:fabrics.length,url:'',quality:'standard',tags:[]});
+  i=fabrics.length-1; updateUI();
+}
+
+// Quality toggle (per-fabric) — UI only
+function handleQToggleClick(e){
+  const b=e.target.closest('button'); if(!b||!fabrics[i]) return;
+  [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
+  fabrics[i].quality=b.dataset.q;
+}
+
+// Tagging: store NORMALIZED coords (0..1); overlays re-render from state
+function handleTagFrameClick(e){
+  if(!fabrics[i] || !fabrics[i].url) return; // must have a fabric image to tag pillows for that fabric
+  const r=tagFrame.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+  fabrics[i].tags.push({id: nextMarkerId++, x, y});
+  addOverlay(x,y,fabrics[i].url, i, fabrics[i].tags.length-1);
+  updateUI();
+}
+
+// Undo last tag and clear all tags for current fabric
+function handleUndoClick(){
+  if(!fabrics[i] || fabrics[i].tags.length===0) return;
+  fabrics[i].tags.pop(); redraw(); updateUI();
+}
+function handleClearClick(){
+  if(!fabrics[i]) return;
+  fabrics[i].tags=[]; redraw(); updateUI();
+}
+
+// Validation + twins sync + ZIP build + download
+async function handlePreviewClick(){
+  const {errors, warnings} = validateBeforeGeneratePillows();
+  await new Promise(requestAnimationFrame);
+  syncTwinsWithVisible();
+  await new Promise(requestAnimationFrame);
+
+  if(errors.length>0){ alert("خطاهای ضروری:- " + errors.join("- ")); return; }
+  if(warnings.length>0){
+    const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید):- " + warnings.join("- ") + "ادامهٔ تولید؟");
+    if(!proceed) return;
+  }
+
+  const {meta, included, metaTxt} = buildPillowsMetaAndFiles();
+  const annotatedBlob = await makeAnnotatedBlobFromDOM();
+
+  const zip = new JSZip();
+  zip.file('meta.json', JSON.stringify(meta, null, 2));
+  zip.file('meta.txt', metaTxt);
+
+  if(baseOriginalFile instanceof File){
+    zip.file(meta.files.base_image_raw, baseOriginalFile);
+  }else if(baseImg2 && baseImg2.src){
+    const c2=document.createElement('canvas');
+    c2.width=baseImg2.naturalWidth||baseImg2.width; c2.height=baseImg2.naturalHeight||baseImg2.height;
+    const k=c2.getContext('2d'); k.drawImage(baseImg2,0,0,c2.width,c2.height);
+    const b=await new Promise(res=>c2.toBlob(res,'image/png',0.92));
+    if(b) zip.file('base_image_raw.png', b);
+  }
+  if(annotatedBlob) zip.file('base_image_annotated.png', annotatedBlob);
+
+  for(const it of included){ zip.file(it.id + ext(it.file.name), it.file); }
+  const out = await zip.generateAsync({type:'blob'});
+  downloadBlob(out, 'pillows_export_' + tsNow() + '.zip');
+}
+
+// Remove current fabric (clears image + tags, reorders, selects next)
+function handleRemoveFabricClick(){
+  // Clear file inputs to ensure same-file re-pick triggers 'change'
+  try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
+  try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
+  // Revoke URL (if present) to free memory
+  try{ if(fabrics[i]?.url) URL.revokeObjectURL(fabrics[i].url); }catch(e){}
+
+  if(!fabrics[i]) return;
+  const removedIndex = i;
+
+  // Remove fabric; its tags live on the object so removal clears them
+  fabrics.splice(i,1);
+
+  if(fabrics.length===0){
+    fabrics.push({id:0,url:'',quality:'standard',tags:[]});
+    i=0;
+  }else{
+    // Reindex ids
+    fabrics.forEach((f,ii)=>{ f.id=ii; });
+    // Select the next fabric that was after the removed one (if any)
+    i = Math.min(removedIndex, fabrics.length-1);
+  }
+
+  // Refresh UI (thumbnail + overlay)
+  fabMini.style.visibility = fabrics[i].url ? 'visible' : 'hidden';
+  if(fabrics[i].url) fabMini.src = fabrics[i].url;
+  redraw();
+  updateUI();
+  showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+}
+
+/* ============================== Event Bindings ============================ */
+
+// Hamburger + outside close
+hambtn.addEventListener('click', handleHamburgerClick);
+document.addEventListener('click', handleDocumentClick);
+
+// Stage 1 upload
+photoFile.addEventListener('change', handlePhotoFileChange);
+photoCam .addEventListener('change', handlePhotoCamChange);
+goNext   .addEventListener('click',  handleGoNextClick);
+
+// Prev/Next between fabrics
+prevBtn.addEventListener('click', handlePrevBtnClick);
+nextBtn.addEventListener('click', handleNextBtnClick);
+
+// Fabric asset selection
+fabFile.addEventListener('change', handleFabFileChange);
+fabCam .addEventListener('change', handleFabCamChange);
+
+// Add fabric
+addBtn.addEventListener('click', handleAddBtnClick);
+
+// Quality toggle
+qToggle.addEventListener('click', handleQToggleClick);
+
+// Tagging
+tagFrame.addEventListener('click', handleTagFrameClick);
+
+// Undo/Clear
+undoBtn.addEventListener('click', handleUndoClick);
+clearBtn.addEventListener('click', handleClearClick);
+
+// Generate (Preview)
+previewBtn.addEventListener('click', handlePreviewClick);
+
+// Remove fabric (IIFE in original → direct binding here)
+(function bindRemoveFabric(){
+  const btn=document.getElementById('removeFabBtn');
+  if(!btn) return;
+  btn.addEventListener('click', handleRemoveFabricClick);
+})();
+
+/* ================================ Toast ================================== */
+
+function showToast(msg){
+  const t=document.getElementById('toast'); if(!t) return;
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+/* ================================== Init ================================= */
+
+(function init(){
+  // No auto-redraw here; page initializes after user picks the base photo
+})();
+</script>
+
+<div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
