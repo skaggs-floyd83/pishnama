@@ -441,8 +441,20 @@ function buildSofaMetaAndFiles(){
     }
   });
 
+  // Determine mode_selection for sofa:
+  // "all"  → if ANY fabric covers all three parts
+  // "partial" → otherwise
+  let modeSelectionSofa = "partial";
+  for (const f of fabrics) {
+    if (f.parts && f.parts.size === 3) {
+      modeSelectionSofa = "all";
+      break;
+    }
+  }
+
   const meta = {
     mode: 'sofa',
+    mode_selection: modeSelectionSofa,   // <-- NEW
     quality,
     fabrics: included.map(x=>({id:x.id, parts:x.parts})),
     excluded,
@@ -451,6 +463,8 @@ function buildSofaMetaAndFiles(){
       fabrics: included.map(x=> x.id + ext(x.file.name))
     }
   };
+
+
 
   const lines = [];
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
@@ -627,19 +641,23 @@ async function handlePreviewClick(){
     const proceed = confirm("موارد اختیاری (می‌توانید اصلاح کنید یا ادامه دهید): " + warnings.join(" ") + "\nادامهٔ تولید؟");
     if(!proceed) return;
   }
-  const {meta, included, metaTxt} = buildSofaMetaAndFiles();
-  const zip = new JSZip();
-  zip.file('meta.json', JSON.stringify(meta, null, 2));
-  zip.file('meta.txt', metaTxt);
-  if(sofaBaseFile){
-    const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
-    zip.file(baseName, sofaBaseFile);
+
+
+
+  const {meta, included} = buildSofaMetaAndFiles();
+
+  try {
+    enterLoadingState();
+    const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
+    baseImg2.src = "data:image/png;base64," + imageBase64;
+  } catch (err) {
+    showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
+  } finally {
+    exitLoadingState();
   }
-  for(const it of included){
-    zip.file(it.id + ext(it.file.name), it.file);
-  }
-  const blob = await zip.generateAsync({type:'blob'});
-  downloadBlob(blob, 'sofa_export_' + tsNow() + '.zip');
+
+
+
 }
 
 // Remove current fabric (clears image + parts, reorders, selects next)
@@ -675,6 +693,39 @@ function handleRemoveFabricClick(){
   showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
   updateUI();
 }
+
+// ====== NEW: Backend integration & loading state ======
+async function sendToBackend(meta, included, baseFile) {
+  const form = new FormData();
+  form.append("meta", JSON.stringify(meta));
+  if (baseFile) form.append("base_image", baseFile);
+
+  for (const it of included) {
+    form.append(it.id, it.file);
+  }
+
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    body: form
+  });
+
+  if (!res.ok) throw new Error("Generation failed");
+  const data = await res.json();
+  return data.image_base64;
+}
+
+function enterLoadingState() {
+  previewBtn.disabled = true;
+  previewBtn.textContent = "⏳ در حال تولید...";
+  if (baseImg2) baseImg2.style.opacity = "0.4";
+}
+
+function exitLoadingState() {
+  previewBtn.disabled = false;
+  previewBtn.textContent = "✨ پیش‌نمایش";
+  if (baseImg2) baseImg2.style.opacity = "1";
+}
+
 
 /* ============================== Event Bindings ============================ */
 

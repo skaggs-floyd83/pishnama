@@ -318,7 +318,14 @@ function updateUI(){
   // Wizard badge: "پارچه X از N"
   // wizBadge.textContent = `پارچه ${idx+1} از ${fabrics.length}`;
 
-    // 2) Mode buttons visibility & active state
+
+  // Hide or show the mode title based on stage
+  const modeTitle = document.querySelector('.tagsHeader');
+  if (modeTitle) {
+      modeTitle.style.display = (idx === 0 ? 'block' : 'none');
+  }
+
+  // 2) Mode buttons visibility & active state
   if (schem) {
     schem.querySelectorAll('.part').forEach(btn => {
       if (idx === 0) {
@@ -619,19 +626,22 @@ async function handlePreviewClick(){
   }
 
 
-  const {meta, included, metaTxt} = buildSofaMetaAndFiles();
-  const zip = new JSZip();
-  zip.file('meta.json', JSON.stringify(meta, null, 2));
-  zip.file('meta.txt', metaTxt);
-  if(sofaBaseFile){
-    const baseName = meta.files.base_image || ('base_image'+ext(sofaBaseFile.name));
-    zip.file(baseName, sofaBaseFile);
+
+
+  const {meta, included} = buildSofaMetaAndFiles();
+
+  try {
+    enterLoadingState();
+    const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
+    baseImg2.src = "data:image/png;base64," + imageBase64;
+  } catch (err) {
+    showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
+  } finally {
+    exitLoadingState();
   }
-  for(const it of included){
-    zip.file(it.id + ext(it.file.name), it.file);
-  }
-  const blob = await zip.generateAsync({type:'blob'});
-  downloadBlob(blob, 'pillows_export_' + tsNow() + '.zip');
+
+
+  
 
 }
 
@@ -663,6 +673,41 @@ function handleRemoveFabricClick(){
   showToast("پارچه حذف شد.");
   updateUI();
 }
+
+
+// ====== NEW: Backend integration & loading state ======
+async function sendToBackend(meta, included, baseFile) {
+  const form = new FormData();
+  form.append("meta", JSON.stringify(meta));
+  if (baseFile) form.append("base_image", baseFile);
+
+  for (const it of included) {
+    form.append(it.id, it.file);
+  }
+
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    body: form
+  });
+
+  if (!res.ok) throw new Error("Generation failed");
+  const data = await res.json();
+  return data.image_base64;
+}
+
+function enterLoadingState() {
+  previewBtn.disabled = true;
+  previewBtn.textContent = "⏳ در حال تولید...";
+  if (baseImg2) baseImg2.style.opacity = "0.4";
+}
+
+function exitLoadingState() {
+  previewBtn.disabled = false;
+  previewBtn.textContent = "✨ پیش‌نمایش";
+  if (baseImg2) baseImg2.style.opacity = "1";
+}
+
+
 
 /* ============================== Event Bindings ============================ */
 
