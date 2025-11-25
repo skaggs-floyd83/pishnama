@@ -22,6 +22,8 @@ import express from "express";
 import multer from "multer";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import FormData from "form-data";
+
 
 // ===== NEW: Added for serving HTML files =====
 import path from "path";
@@ -54,21 +56,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 //  Replace the placeholders with your actual detailed prompts.
 // ---------------------------------------------------------------------------
 const prompt1 = `
-[PROMPT1]  (sofa mode + mode_selection = "all")
-Write your full, detailed, uncompressed prompt here.
-This prompt will be used when the user reupholsters ALL sofa parts with a SINGLE fabric.
+replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly and completely as it is in the first image. do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
 
-const prompt2 = `
-[PROMPT2]  (sofa mode + mode_selection = "partial")
-Write your full, detailed, uncompressed prompt here.
-This prompt will be used when the sofa parts receive DIFFERENT fabrics.
-`;
 
 const prompt3 = `
-[PROMPT3]  (pillows mode + mode_selection = "single")
-Write your full, detailed, uncompressed prompt here.
-This prompt will be used when ALL pillows must use ONE fabric.
+Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
 
 const prompt4 = `
@@ -76,6 +69,53 @@ const prompt4 = `
 Write your full, detailed, uncompressed prompt here.
 This prompt will be used when pillows receive fabrics RANDOMLY (1–3 fabrics).
 `;
+
+
+// ============================================================================
+// Dynamic prompt generator for:
+//    mode = "sofa"
+//    mode_selection = "partial"
+// Builds an exact mapping of fabrics → sofa parts.
+// ============================================================================
+function buildSofaPartialPrompt(meta) {
+  // meta.fabrics is an array of objects:
+  //   { id: "fabric_01", parts: ["back","seat"] }
+  //
+  // The frontend guarantees:
+  //   • 1–3 fabrics
+  //   • each fabric has 1–3 assigned sofa parts
+  //   • parts ∈ { "back", "seat", "arms" }
+
+  const lines = [];
+
+  lines.push("You are an expert image editor.");
+  lines.push("Your task is to reupholster ONLY the specified parts of the sofa.");
+  lines.push("Do NOT modify any other part of the sofa or the background.");
+  lines.push("");
+  lines.push("=== FABRIC → PART ASSIGNMENT MAP ===");
+
+  meta.fabrics.forEach(f => {
+    const partList = f.parts.map(p => {
+      if (p === "back") return "the sofa BACK";
+      if (p === "seat") return "the sofa SEAT";
+      if (p === "arms") return "the sofa ARMS";
+    }).join(", ");
+
+    lines.push(`• Fabric "${f.id}" must cover: ${partList}.`);
+  });
+
+  lines.push("");
+  lines.push("=== RULES ===");
+  lines.push("1. Apply each fabric ONLY to its listed parts.");
+  lines.push("2. Maintain original geometry, shape, folds, shadows, and lighting.");
+  lines.push("3. Use the exact colors and patterns from the fabric images.");
+  lines.push("4. No blending, no mixing fabrics.");
+  lines.push("5. The rest of the sofa and the background must remain 100% unchanged.");
+
+  return lines.join("\n");
+}
+
+
 
 
 // ============================================================================
@@ -96,6 +136,8 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const meta = JSON.parse(req.body.meta);
     const files = req.files;
 
+    console.log("FILES RECEIVED BY BACKEND:", files);
+
     // -----------------------------------------------------------------------
     // PROMPT SELECTION (4 possible branches)
     // -----------------------------------------------------------------------
@@ -105,7 +147,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       prompt = prompt1;
     }
     else if (meta.mode === "sofa" && meta.mode_selection === "partial") {
-      prompt = prompt2;
+      prompt = buildSofaPartialPrompt(meta);
     }
     else if (meta.mode === "pillows" && meta.mode_selection === "single") {
       prompt = prompt3;
@@ -133,16 +175,16 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // -----------------------------------------------------------------------
     let fidelity;
     let outQuality;
-    let size;
+    let size = "auto";
 
     if (meta.quality === "high") {
       fidelity = "high";
       outQuality = "high";
-      size = "2048x2048";
+      // size = "2048x2048";
     } else {
       fidelity = "low";
       outQuality = "medium";
-      size = "1024x1024";
+      // size = "1024x1024";
     }
 
     // -----------------------------------------------------------------------
@@ -163,16 +205,23 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // Attach files (base image and all fabric images)
     // Each uploaded file has: fieldname, originalname, buffer
     for (const f of files) {
-      form.append(f.fieldname, f.buffer, { filename: f.originalname });
+      if (f.fieldname === "base_image") {
+        // OpenAI requires this exact name:
+        form.append("image", f.buffer, { filename: f.originalname });
+      } else {
+        // Fabric images: any name is OK
+        form.append("image", f.buffer, { filename: f.originalname });
+      }
     }
+
 
     // -----------------------------------------------------------------------
     // Send request to OpenAI Images Edit API
     // -----------------------------------------------------------------------
-    const response = await fetch("https://api.openai.com/v1/images/edits", {
+    const response = await fetch("https://api.gapgpt.app/v1/images/edits", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer " + process.env.OPENAI_API_KEY
+        "Authorization": "Bearer " + "sk-WK54igRTsBhWc8yvwaaCJVzdkz81y5rNnpcngEhCGrwFlK8k"
       },
       body: form
     });
