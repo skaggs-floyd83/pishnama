@@ -65,9 +65,7 @@ Replace the fabric of all of the decorative pillows in the first image (includin
 `;
 
 const prompt4 = `
-[PROMPT4]  (pillows mode + mode_selection = "random")
-Write your full, detailed, uncompressed prompt here.
-This prompt will be used when pillows receive fabrics RANDOMLY (1–3 fabrics).
+Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabrics in the other images so that all of the pillows appear to be made from exactly that fabric, with exactly the same color and exactly the same pattern. For each pillow choose the fabric that results in the best overall composition and make sure that all of the fabrics are used. Each pillow should be covered with a single fabric. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
 
 
@@ -213,8 +211,6 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         form.append("image", f.buffer, { filename: f.originalname });
       }
     }
-
-
     // -----------------------------------------------------------------------
     // Send request to OpenAI Images Edit API
     // -----------------------------------------------------------------------
