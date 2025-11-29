@@ -58,10 +58,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const prompt1 = `
 replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly and completely as it is in the first image. do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
-// testing shirt replacement
-// const prompt1 = `
-// replace the fabric of the shirt of the boy with the fabric in the other image.
-// `;
+
 
 const prompt3 = `
 Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
@@ -76,57 +73,45 @@ Replace the fabric of all of the decorative pillows in the first image (includin
 // Dynamic prompt generator for:
 //    mode = "sofa"
 //    mode_selection = "partial"
+// Builds an exact mapping of fabrics → sofa parts.
 // ============================================================================
-// ============================================================================
-// Dynamic prompt for prompt2 (sofa multi-fabric with possible "unchanged" parts)
-// ============================================================================
-function buildPrompt2(meta) {
-  // First, create a reverse mapping: part → fabric index (1,2,3) or null
-  const partToFabric = { back: null, seat: null, arms: null };
-
-  meta.fabrics.forEach((f, index) => {
-    f.parts.forEach(part => {
-      partToFabric[part] = index + 1; // fabric indices are 1-based
-    });
-  });
-
-  // Helper to convert index → label
-  function fabricLabel(n) {
-    if (n === 1) return "first fabric image";
-    if (n === 2) return "second fabric image";
-    if (n === 3) return "third fabric image";
-    return null;
-  }
-
-  // Build each mapping line in the required format
-  const mappings = [];
-
-  ["back", "seat", "arms"].forEach(part => {
-    const assigned = partToFabric[part];
-    const label = assigned
-      ? fabricLabel(assigned)
-      : "do not change its fabric, keep its fabric exactly as it is in the original sofa image.";
-
-    // Format exactly as you requested:
-    // Back -> second fabric image
-    mappings.push(`${capitalize(part)} -> ${label}`);
-  });
+function buildSofaPartialPrompt(meta) {
+  // meta.fabrics is an array of objects:
+  //   { id: "fabric_01", parts: ["back","seat"] }
+  //
+  // The frontend guarantees:
+  //   • 1–3 fabrics
+  //   • each fabric has 1–3 assigned sofa parts
+  //   • parts ∈ { "back", "seat", "arms" }
 
   const lines = [];
 
-  lines.push("The first image includes a sofa. replace the fabric of the “sofa parts” (back, seat, arms) using the fabrics in the other images, according to the following mapping:");
-  lines.push(mappings.join("\n"));
-  lines.push("The reupholstered parts of the sofa should appear to be made from exactly the associated fabric, with the same color and the same pattern. Do not change anything else and keep everything else exactly and completely as it is in the first image. Do not change anything like the carpet or such and keep them exactly as they are in the first image.");
+  lines.push("You are an expert image editor.");
+  lines.push("Your task is to reupholster ONLY the specified parts of the sofa.");
+  lines.push("Do NOT modify any other part of the sofa or the background.");
+  lines.push("");
+  lines.push("=== FABRIC → PART ASSIGNMENT MAP ===");
+
+  meta.fabrics.forEach(f => {
+    const partList = f.parts.map(p => {
+      if (p === "back") return "the sofa BACK";
+      if (p === "seat") return "the sofa SEAT";
+      if (p === "arms") return "the sofa ARMS";
+    }).join(", ");
+
+    lines.push(`• Fabric "${f.id}" must cover: ${partList}.`);
+  });
+
+  lines.push("");
+  lines.push("=== RULES ===");
+  lines.push("1. Apply each fabric ONLY to its listed parts.");
+  lines.push("2. Maintain original geometry, shape, folds, shadows, and lighting.");
+  lines.push("3. Use the exact colors and patterns from the fabric images.");
+  lines.push("4. No blending, no mixing fabrics.");
+  lines.push("5. The rest of the sofa and the background must remain 100% unchanged.");
 
   return lines.join("\n");
 }
-
-// Small helper to capitalize the part names
-function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-
 
 
 
@@ -149,8 +134,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const meta = JSON.parse(req.body.meta);
     const files = req.files;
 
-    // Logging the received files
-    // console.log("FILES RECEIVED BY BACKEND:", files);
+    console.log("FILES RECEIVED BY BACKEND:", files);
 
     // -----------------------------------------------------------------------
     // PROMPT SELECTION (4 possible branches)
@@ -161,8 +145,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       prompt = prompt1;
     }
     else if (meta.mode === "sofa" && meta.mode_selection === "partial") {
-      prompt = buildPrompt2(meta);
-      console.log(prompt);
+      prompt = buildSofaPartialPrompt(meta);
     }
     else if (meta.mode === "pillows" && meta.mode_selection === "single") {
       prompt = prompt3;
@@ -190,21 +173,17 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // -----------------------------------------------------------------------
     let fidelity;
     let outQuality;
-    let model;
     let size = "auto";
 
     if (meta.quality === "high") {
-      model = "gpt-image-1";
-      fidelity = "low";
-      outQuality = "medium";
+      fidelity = "high";
+      outQuality = "high";
       // size = "2048x2048";
     } else {
-      model = "gpt-image-1-mini";
       fidelity = "low";
-      outQuality = "high";
+      outQuality = "medium";
       // size = "1024x1024";
     }
-
 
     // -----------------------------------------------------------------------
     // Build the form to send to OpenAI
@@ -212,12 +191,12 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const form = new FormData();
 
     // Required model configuration
-    form.append("model", model);
+    form.append("model", "gpt-image-1");  
 
     // Insert dynamic parameters
     form.append("prompt", prompt);
-    form.append("input_fidelity", fidelity);
-    form.append("quality", outQuality);
+    form.append("input_fidelity", fidelity);     
+    form.append("quality", outQuality);          
     form.append("size", size);
     form.append("n", "1");   // always 1 image for now
 
@@ -233,37 +212,14 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       }
     }
 
-    // === SAMPLE REQUEST FOR PROVIDER (SAFE TO LOG) ===
-    /*
-    console.log("=== SAMPLE OUTGOING REQUEST ===");
-    console.log("URL:", "https://api.gapgpt.app/v1/images/edits");
-    console.log("Headers:", {
-      Authorization: "Bearer " + "sk-WK54igRTsBhWc8yvwaaCJVzdkz81y5rNnpcngEhCGrwFlK8k"
-    });
-    console.log("Content-Type:", form.getHeaders()["content-type"]);
-    console.log("Fields:", {
-      model: "gpt-image-1",
-      prompt,
-      input_fidelity: fidelity,
-      quality: outQuality,
-      size,
-      n: 1
-    });
-    console.log("Files:", files.map(f => ({
-      fieldname: f.fieldname,
-      filename: f.originalname,
-      size: f.size
-    })));
-    console.log("=== END OF SAMPLE REQUEST ===");
-    */
 
     // -----------------------------------------------------------------------
     // Send request to OpenAI Images Edit API
     // -----------------------------------------------------------------------
-    const response = await fetch("https://api.gapgpt.app/v1/images/edits", {
+    const response = await fetch("https://api.avalai.ir/v1/images/edits", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer " + "sk-WK54igRTsBhWc8yvwaaCJVzdkz81y5rNnpcngEhCGrwFlK8k"
+        "Authorization": "Bearer " + "aa-kAsbK0kbOx210aY9pYYsmuP8KU1pqE8vjDDzSezbXhBuhEIE"
       },
       body: form
     });
