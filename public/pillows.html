@@ -33,7 +33,7 @@
 <style>
   :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
   html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
-  .wrap{max-width:480px;margin:0 auto;height:100svh;display:flex;flex-direction:column}
+  .wrap{max-width:480px;margin:0 auto;min-height:100svh;/* replaced */ height:auto;/* added */display:flex;flex-direction:column}
   .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
   /* Icon-only hamburger; text "منو" intentionally removed */
   .hamburger{border:1px solid var(--border);background:#0f1a33;color:#e2e8f0;border-radius:10px;padding:8px 12px;cursor:pointer}
@@ -49,7 +49,7 @@
   .btn:disabled{opacity:.5;cursor:not-allowed}
 
   /* Generic image frame for previews/placeholders */
-  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
+  .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
   .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
   .badge{position:absolute;top:8px;right:8px;background:#0f1a33;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.85rem;color:#e5e7eb}
 
@@ -86,8 +86,8 @@
   }
 
 
-  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden}
-  .section{display:none;flex:1;overflow:hidden}
+  .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:auto/*replaced*/}
+  .section{display:none;flex:1;overflow:auto/*replaced*/}
   .section.active{display:flex;flex-direction:column}
 
   .controls{margin:0 10px;display:flex;flex-direction:column;gap:10px;flex:1}
@@ -95,7 +95,7 @@
   .between{display:flex;justify-content:space-between;align-items:center}
 
   /* Fabric selection frame borrowed from pillows layout */
-  .selectFrame{border:1px dashed var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;flex-direction:column;gap:10px;position:relative}
+  .selectFrame{border:1px solid var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;flex-direction:column;gap:10px;position:relative}
 
   /* Fixed heights used in mobile-safe viewport */
   #sofaThumb, #baseFrame { height: 220px !important; width: 100%; }
@@ -187,21 +187,22 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Add Fabric: HIDDEN when fabrics.length >= 3; otherwise enabled based on selection readiness -->
-      <div class="controls">
-        <div class="rightline">
-          <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
+        <!-- Add Fabric: HIDDEN when fabrics.length >= 3; otherwise enabled based on selection readiness -->
+        <div class="controls">
+          <div class="rightline" style="margin-top: 10px;">
+            <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
+          </div>
         </div>
       </div>
 
+      
+
       <!-- Generate row: quality toggle + preview (integration point for the model) -->
       <div class="controls">
-        <div class="rightline" style="gap:8px">
-          <div class="toggle" id="qToggle">
-            <button class="active" data-q="high">هوش یک 2 سکه</button>
-            <button data-q="standard">هوش دو 1 سکه</button>
+        <div class="rightline" style="gap:8px; margin-bottom: 20px; margin-top: 10px;">
+          <div class="toggle" id="qToggle" style="margin-left: 10px;">
+            <button class="active" data-q="high">هوش یک &nbsp; (2 سکه)</button>
+            <button data-q="standard">هوش دو &nbsp; (1 سکه)</button>
           </div>
           <button class="btn primary" id="previewBtn">✨ بساز</button>
         </div>
