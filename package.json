@@ -15,6 +15,7 @@
     "express": "^5.1.0",
     "form-data": "^4.0.5",
     "multer": "^2.0.2",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^7.0.11"
   }
 }
