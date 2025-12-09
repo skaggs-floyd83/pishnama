@@ -117,6 +117,23 @@
   <!-- Header: hamburger only -->
   <div class="bar">
     <button class="hamburger" id="hambtn">☰</button>
+    <button class="btn" id="loginBtn" style="margin-right:10px; direction: ltr;">ورود</button>
+
+    <div id="userMenu" 
+     style="position:absolute; top:50px; right:10px; 
+            background:#0f1629; border:1px solid #3a4367; 
+            padding:10px; border-radius:8px; width:140px; 
+            display:none; z-index:9999;">
+
+      <button id="logoutBtn" 
+              class="btn" 
+              style="width:100%; background:#3a4367;">
+          خروج
+      </button>
+    </div>
+
+
+
     <div class="menu" id="menu">
       <a href="sofa.html">🛋️ طراحی مبل</a>
       <a href="pillows.html">🛋️ طراحی بالشتک ها</a>
@@ -228,6 +245,46 @@
 
 /* ============================== Constants / DOM ============================ */
 
+function updateLoginButton() {
+    const btn = document.getElementById("loginBtn");
+    if (!btn) return;
+
+    const token = localStorage.getItem("pishnama_user_token");
+    const identifier = localStorage.getItem("pishnama_user_identifier");
+
+    if (token && identifier) {
+        // User is logged in
+        btn.textContent = displayPhone(identifier);
+        btn.disabled = false;      // optional: prevent modal opening
+        btn.style.opacity = "0.8";
+    } else {
+        // User is not logged in
+        btn.textContent = "ورود";
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        userMenu.style.display = "none";
+    }
+}
+
+function forceLogoutIfInvalid(tokenResponse) {
+    if (tokenResponse && tokenResponse.error === "login_required") {
+        // Remove invalid credentials
+        localStorage.removeItem("pishnama_user_token");
+        localStorage.removeItem("pishnama_user_identifier");
+
+        // Update UI
+        updateLoginButton();
+
+        // Inform the user
+        showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+
+        return true;  // indicates logout happened
+    }
+    return false;
+}
+
+
+
 // Maps 1..3 to Persian ordinals: اول / دوم / سوم
 function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
 
@@ -283,6 +340,77 @@ function loadImage(el, file){
   el.src = url;
   el.onload = () => URL.revokeObjectURL(url);
 }
+
+// ======================= IMAGE COMPRESSION HELPERS =========================
+
+const MAX_BASE_BYTES   = 3 * 1024 * 1024;  // 3 MB threshold for sofa+pillows base image
+const MAX_FABRIC_BYTES = 3 * 1024 * 1024;  // 3 MB threshold for fabrics
+const BASE_MAX_SIDE    = 1536;
+const FABRIC_MAX_SIDE  = 1024;
+
+function ensureJpegName(name) {
+  if (!name) return "image.jpg";
+  return name.replace(/\.[^.]+$/,"") + ".jpg";
+}
+
+function loadFileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (err) => {
+      URL.revokeObjectURL(url);
+      reject(err);
+    };
+    img.src = url;
+  });
+}
+
+async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
+  if (file.type === "image/jpeg" && file.size <= maxBytes) {
+    return file;
+  }
+
+  const img = await loadFileToImage(file);
+  const longest = Math.max(img.width || maxSide, img.height || maxSide);
+  const scale   = longest > maxSide ? (maxSide / longest) : 1;
+
+  const targetW = Math.max(1, Math.round((img.width  || maxSide) * scale));
+  const targetH = Math.max(1, Math.round((img.height || maxSide) * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = targetW;
+  canvas.height = targetH;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  let quality = 0.85;
+  let lastBlob = null;
+
+  for (let i = 0; i < 4; i++) {
+    const blob = await new Promise(resolve =>
+      canvas.toBlob(resolve, "image/jpeg", quality)
+    );
+    if (!blob) break;
+    lastBlob = blob;
+
+    if (blob.size <= maxBytes || quality <= 0.6) {
+      return new File([blob], ensureJpegName(file.name), { type: "image/jpeg" });
+    }
+    quality -= 0.1;
+  }
+
+  if (lastBlob) {
+    return new File([lastBlob], ensureJpegName(file.name), { type: "image/jpeg" });
+  }
+  return file;
+}
+
+
 
 /** Stage navigation (no side effects beyond DOM visibility) */
 function gotoUpload(){
@@ -530,20 +658,32 @@ function handleAddBtnClick(){
 
 
 // Stage 1: selecting the base sofa image enables Continue after load
-function handleSofaFileChange(e){
-  const f=e.target.files?.[0]; if(!f) return;
-  sofaChosen = true;
-  sofaBaseFile = f;
+async function handleSofaFileChange(e){
+  const originalFile = e.target.files?.[0];
+  if (!originalFile) return;
+
+  const file = await compressImageIfNeeded(originalFile, {
+    maxBytes: MAX_BASE_BYTES,
+    maxSide: BASE_MAX_SIDE
+  });
+
+  sofaChosen   = true;
+  sofaBaseFile = file;
+
   toFabricsBtn.disabled = false;
   sofaThumb.innerHTML = '<img>';
-  loadImage(sofaThumb.firstElementChild, f);
-  if(baseImg2){ loadImage(baseImg2, f); }
-    if(fabrics.length===0) {
-    fabrics.push({id:0, url:'', file: undefined});
+  loadImage(sofaThumb.firstElementChild, file);
+  if (baseImg2) {
+    loadImage(baseImg2, file);
+  }
+
+  if (fabrics.length === 0) {
+    fabrics.push({ id: 0, url: "", file: undefined });
   }
   idx = 0;
-
 }
+
+
 // Camera mirrors file selection
 function handleSofaCamChange(){
   sofaFile.dispatchEvent(new Event('change'));
@@ -554,29 +694,43 @@ function handleToFabricsClick(){
 }
 
 // Fabric image selection for current fabric idx
-function setFabricFromFile(file){
+async function setFabricFromFile(file){
+  const processed = await compressImageIfNeeded(file, {
+    maxBytes: MAX_FABRIC_BYTES,
+    maxSide: FABRIC_MAX_SIDE
+  });
+
   // Revoke previous object URL (if any) to avoid leaks
-  if (fabrics[idx]?.url) try{ URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
-  const url = URL.createObjectURL(file);
-  fabrics[idx].url = url;
-  fabrics[idx].file = file;
+  if (fabrics[idx]?.url) {
+    try { URL.revokeObjectURL(fabrics[idx].url); } catch (e) {}
+  }
+
+  const url = URL.createObjectURL(processed);
+  fabrics[idx].url  = url;
+  fabrics[idx].file = processed;
   fabImg.src = url;
   updateUI();
 }
 
-function handleFabFileChange(e){
-  const f=e.target.files?.[0]; if(!f) return;
-  setFabricFromFile(f);
+
+
+async function handleFabFileChange(e){
+  const f = e.target.files?.[0];
+  if (!f) return;
+  await setFabricFromFile(f);
   // Reset input so selecting the same file triggers 'change' in Chrome/Edge
   e.target.value = "";
 }
 
-function handleFabCamChange(e){
-  const f=e.target.files?.[0]; if(!f) return;
-  setFabricFromFile(f);
+async function handleFabCamChange(e){
+  const f = e.target.files?.[0];
+  if (!f) return;
+  await setFabricFromFile(f);
   // Reset input so selecting the same capture triggers 'change' in Chrome/Edge
   e.target.value = "";
 }
+
+
 
 
 // Quality toggle: (high/standard) 
@@ -607,6 +761,16 @@ function handleSchemClick(e){
 
 // Validation + ZIP build + download
 async function handlePreviewClick(){
+
+  // ========== REQUIRE LOGIN ==========
+  const token = localStorage.getItem("pishnama_user_token");
+  if (!token) {
+      alert("برای ادامه، لطفاً وارد شوید.");
+      loginModal.style.display = "flex";   // show the login modal automatically
+      return;
+  }
+
+
   const {errors, warnings} = validateBeforeGenerateSofa();
   if(errors.length>0){
     alert("خطاهای ضروری: " + errors.join(" "));
@@ -636,6 +800,12 @@ async function handlePreviewClick(){
     const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
     baseImg2.src = "data:image/png;base64," + imageBase64;
   } catch (err) {
+    console.error(err);
+    // Do NOT show "خطا..." if the user was logged out automatically
+    if (err.message === "Unauthorized") {
+        // Already handled by forceLogoutIfInvalid()
+        return;
+    }
     showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
   } finally {
     exitLoadingState();
@@ -691,12 +861,33 @@ async function sendToBackend(meta, included, baseFile) {
 
   const res = await fetch("/api/generate", {
     method: "POST",
+    headers: {
+        "x-user-token": localStorage.getItem("pishnama_user_token") || ""
+    },
     body: form
-  });
+  })
 
-  if (!res.ok) throw new Error("Generation failed");
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+
+    // If backend says login is required, force logout
+    if (forceLogoutIfInvalid(data)) {
+        throw new Error("Unauthorized");
+    }
+
+    throw new Error("Generation failed");
+  }
+
   const data = await res.json();
+
+  // If backend unexpectedly returns login_required here
+  if (forceLogoutIfInvalid(data)) {
+      throw new Error("Unauthorized");
+  }
+
   return data.image_base64;
+
 }
 
 function enterLoadingState() {
@@ -758,8 +949,183 @@ previewBtn.addEventListener('click', handlePreviewClick);
   // Do not call updateUI() here to avoid any visual flicker before user input.
 })();
 
+updateLoginButton();
+
 </script>
 
 <div id="toast" role="status" aria-live="polite"></div>
+
+<!-- ========================= -->
+<!-- LOGIN MODAL (HIDDEN INIT) -->
+<!-- ========================= -->
+<div id="loginModal" 
+     style="position:fixed; inset:0; background:rgba(0,0,0,0.6); 
+            display:none; align-items:center; justify-content:center; z-index:9999;">
+  
+  <div style="background:#0f162b; padding:20px; border-radius:12px; width:85%; max-width:340px; color:#e5e7eb;">
+    <h3 style="margin-top:0;">ورود / ثبت نام</h3>
+
+    <label>ایمیل یا شماره موبایل:</label>
+    <input id="loginIdentifier" style="width:100%; padding:8px; margin:8px 0; border-radius:8px;">
+    
+    <button id="sendCodeBtn" class="btn primary" style="width:100%; margin-bottom:10px;">ارسال کد</button>
+
+    <label>کد چهار رقمی:</label>
+    <input id="loginCode" maxlength="4" style="width:100%; padding:8px; margin:8px 0; border-radius:8px;">
+
+    <button id="verifyCodeBtn" class="btn" style="width:100%;">تایید</button>
+
+    <button id="closeLoginModal" class="btn" style="margin-top:10px; width:100%;">بستن</button>
+  </div>
+</div>
+
+<script>
+  
+// ============================
+// SIMPLE LOGIN HANDLING
+// ============================
+const loginModal = document.getElementById("loginModal");
+const loginBtn = document.getElementById("loginBtn");
+const closeLoginModal = document.getElementById("closeLoginModal");
+const sendCodeBtn = document.getElementById("sendCodeBtn");
+const verifyCodeBtn = document.getElementById("verifyCodeBtn");
+
+const userMenu = document.getElementById("userMenu");
+const logoutBtn = document.getElementById("logoutBtn");
+
+function isValidEmail(str) {
+    return /\S+@\S+\.\S+/.test(str);
+}
+
+function isValidPhone(str) {
+    return /^09\d{9}$/.test(str);
+}
+
+function normalizePhone(str) {
+    // input: 09123456789 → output: +989123456789
+    if (isValidPhone(str)) {
+        return "+98" + str.slice(1);
+    }
+    return str;
+}
+
+
+// Toggle user menu when clicking the identifier (loginBtn)
+loginBtn.onclick = () => {
+    const token = localStorage.getItem("pishnama_user_token");
+    if (token) {
+        // User is logged in → show/hide menu
+        userMenu.style.display = 
+            userMenu.style.display === "block" ? "none" : "block";
+    } else {
+        // User not logged in → open login modal
+        loginModal.style.display = "flex";
+    }
+};
+
+logoutBtn.onclick = () => {
+    // Clear stored credentials
+    localStorage.removeItem("pishnama_user_token");
+    localStorage.removeItem("pishnama_user_identifier");
+
+    // Update UI
+    updateLoginButton();
+
+    // Hide menu
+    userMenu.style.display = "none";
+
+    // Optional user feedback
+    showToast("با موفقیت خارج شدید.");
+};
+
+function displayPhone(identifier) {
+    // Convert +989123456789 → 09123456789
+    if (identifier.startsWith("+98") && identifier.length === 13) {
+        return "0" + identifier.slice(3);
+    }
+    return identifier; // email or unexpected case
+}
+
+
+
+
+closeLoginModal.onclick = () => loginModal.style.display = "none";
+
+// Send code
+sendCodeBtn.onclick = async () => {
+  let identifier = document.getElementById("loginIdentifier").value.trim();
+  if (!identifier) return alert("لطفاً ایمیل یا شماره موبایل را وارد کنید.");
+
+  if (!isValidEmail(identifier) && !isValidPhone(identifier)) {
+      return alert("لطفا ایمیل یا شماره موبایل را اصلاح فرمایید");
+  }
+
+  // Normalize phone to +98 format for backend
+  identifier = normalizePhone(identifier);
+
+  await fetch("/api/request-code", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({identifier})
+  });
+
+  alert("کد برای شما ارسال شد.");
+
+};
+
+
+// Verify
+verifyCodeBtn.onclick = async () => {
+  
+  let identifier = document.getElementById("loginIdentifier").value.trim();
+  if (!isValidEmail(identifier) && !isValidPhone(identifier)) {
+      return alert("لطفا ایمیل یا شماره موبایل را اصلاح فرمایید");
+  }
+  // normalize before sending to backend
+  identifier = normalizePhone(identifier);
+
+
+  const code = document.getElementById("loginCode").value.trim();
+
+  const res = await fetch("/api/verify-code", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({identifier, code})
+  });
+
+  const data = await res.json();
+  if (!data.token) return alert("کد اشتباه است.");
+
+  // Save token + identifier
+  localStorage.setItem("pishnama_user_token", data.token);
+  localStorage.setItem("pishnama_user_identifier", identifier);
+
+  // Close modal
+  alert("ورود با موفقیت انجام شد!");
+  loginModal.style.display = "none";
+
+  // Update UI
+  updateLoginButton();
+
+};
+
+document.addEventListener("click", (e) => {
+    if (!userMenu.contains(e.target) && e.target !== loginBtn) {
+        userMenu.style.display = "none";
+    }
+});
+
+window.addEventListener("storage", (e) => {
+    if (e.key === "pishnama_user_token") {
+        updateLoginButton();
+        userMenu.style.display = "none";  // closes the user dropdown menu in other tabs after logout
+        loginModal.style.display = "none";   // closes login panel in other tabs
+    }
+});
+
+
+</script>
+
+
 </body>
 </html>
