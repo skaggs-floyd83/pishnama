@@ -34,6 +34,9 @@ import { fileURLToPath } from "url";
 import crypto from "crypto"; 
 import nodemailer from "nodemailer";
 
+// import DB & migrations
+import { runMigrations, db } from "./db.js";
+
 
 
 dotenv.config();
@@ -554,6 +557,12 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     });
   }
 });
+
+
+
+
+// Run DB migrations once at startup
+runMigrations();
 
 // ============================================================================
 // Start the server
