@@ -169,15 +169,10 @@ function isValidEmailServer(str) {
   return /\S+@\S+\.\S+/.test(str);
 }
 
-function isValidPhoneServer(str) {
-  return /^09\d{9}$/.test(str);
-}
 
-function normalizePhoneServer(str) {
-  if (isValidPhoneServer(str)) {
-    return "+98" + str.slice(1);
-  }
-  return str;
+function isValidPhoneServer(str) {
+  // Normalized numbers: +989xxxxxxxxx
+  return /^\+989\d{9}$/.test(str);
 }
 
 
@@ -245,10 +240,6 @@ app.post("/api/request-code", express.json(), async (req, res) => {
       return res.status(400).json({ error: "invalid_identifier" });
     }
 
-    // Normalize phone numbers to +98
-    identifier = normalizePhoneServer(identifier);
-
-
     const code = String(Math.floor(1000 + Math.random() * 9000));
     loginCodes[identifier] = code;
 
@@ -281,8 +272,7 @@ app.post("/api/verify-code", express.json(), (req, res) => {
   if (!isValidEmailServer(identifier) && !isValidPhoneServer(identifier)) {
     return res.status(400).json({ error: "invalid_identifier" });
   }
-  identifier = normalizePhoneServer(identifier);
-
+  
   if (!identifier || !code)
     return res.status(400).json({ error: "missing fields" });
 
@@ -291,10 +281,33 @@ app.post("/api/verify-code", express.json(), (req, res) => {
 
   delete loginCodes[identifier];
 
-  const token = crypto.randomBytes(24).toString("hex");
-  userTokens[token] = identifier;
+  
 
+  
+
+  // ================= DB USER RESOLUTION =================
+
+  // 1) Find user by identifier
+  let row = db
+    .prepare("SELECT id FROM users WHERE identifier = ?")
+    .get(identifier);
+
+  // 2) If user does not exist, create it
+  if (!row) {
+    const info = db
+      .prepare("INSERT INTO users (identifier) VALUES (?)")
+      .run(identifier);
+
+    row = { id: info.lastInsertRowid };
+  }
+
+  // 3) Generate token and map it to user.id (NOT identifier)
+  const token = crypto.randomBytes(24).toString("hex");
+  userTokens[token] = row.id;
+
+  // 4) Return token to frontend
   return res.json({ token });
+
 });
 
 
