@@ -223,6 +223,104 @@ async function sendLoginSms(phone, code) {
 }
 
 
+// ====================== CREDIT CONFIG & HELPERS===========================
+
+// Maximum number of old credits that can be preserved on top-up
+const CREDIT_KEEP_THRESHOLD = 10;
+
+// Credit cost per generation
+const CREDIT_COST_STANDARD = 1;
+const CREDIT_COST_HIGH = 2;
+
+// Default expiration for new credit packages (days)
+const CREDIT_PACKAGE_DAYS = 30;
+
+// Low-level DB helpers (safe primitives)
+
+// Fetch user row
+function getUserById(userId) {
+  return db
+    .prepare(
+      `SELECT id, credits, credits_expires_at
+       FROM users
+       WHERE id = ?`
+    )
+    .get(userId);
+}
+
+// Expire credits if needed (self-healing)
+function expireCreditsIfNeeded(user) {
+  if (!user) return null;
+
+  if (
+    user.credits_expires_at &&
+    new Date(user.credits_expires_at) < new Date()
+  ) {
+    db.prepare(
+      `UPDATE users
+       SET credits = 0,
+           credits_expires_at = NULL
+       WHERE id = ?`
+    ).run(user.id);
+
+    return {
+      ...user,
+      credits: 0,
+      credits_expires_at: null
+    };
+  }
+
+  return user;
+}
+
+// Public credit reader (This becomes the only way the rest of your code reads credits.)
+function getUserCredits(userId) {
+  let user = getUserById(userId);
+  if (!user) return null;
+
+  user = expireCreditsIfNeeded(user);
+
+  return {
+    credits: user.credits,
+    credits_expires_at: user.credits_expires_at
+  };
+}
+
+// Generation cost calculator
+function getGenerationCost(meta) {
+  if (meta?.quality === "high") {
+    return CREDIT_COST_HIGH;
+  }
+  return CREDIT_COST_STANDARD;
+}
+
+// Credit deduction primitive (This function assumes sufficiency)
+function deductCredits(userId, amount) {
+  db.prepare(
+    `UPDATE users
+     SET credits = credits - ?
+     WHERE id = ?`
+  ).run(amount, userId);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ===============================================
 // POST /api/request-code
@@ -410,7 +508,10 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     }
 
 
-    console.log("Generation requested by user:", req.userId || "unauthenticated");
+    // console.log("Generation requested by user:", req.userId || "unauthenticated");
+    // const creditInfo = getUserCredits(req.userId);
+    // console.log("User credits state:", creditInfo);
+
 
     if (!req.userId) {
       return res.status(401).json({ error: "login_required" });
@@ -431,7 +532,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     }
     else if (meta.mode === "sofa" && meta.mode_selection === "partial") {
       prompt = buildPrompt2(meta);
-      console.log(prompt);
+      // console.log(prompt);
     }
     else if (meta.mode === "pillows" && meta.mode_selection === "single") {
       prompt = prompt3;

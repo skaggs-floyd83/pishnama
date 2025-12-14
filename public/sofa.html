@@ -237,6 +237,14 @@
 
 /* ============================== Constants / DOM ============================ */
 
+function displayPhone(identifier) {
+    // Convert +989123456789 → 09123456789
+    if (identifier.startsWith("+98") && identifier.length === 13) {
+        return "0" + identifier.slice(3);
+    }
+    return identifier; // email or unexpected case
+}
+
 function updateLoginButton() {
     const btn = document.getElementById("loginBtn");
     if (!btn) return;
@@ -1070,16 +1078,6 @@ logoutBtn.onclick = () => {
     // Optional user feedback
     showToast("با موفقیت خارج شدید.");
 };
-
-
-function displayPhone(identifier) {
-    // Convert +989123456789 → 09123456789
-    if (identifier.startsWith("+98") && identifier.length === 13) {
-        return "0" + identifier.slice(3);
-    }
-    return identifier; // email or unexpected case
-}
-
 
 
 
