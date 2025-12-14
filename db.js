@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to the SQLite file
-const dbPath = path.join(__dirname, "data", "pishnama.db");
+const dbPath = path.join(__dirname, "data", "pishneshan.db");
 
 // Open (or create) the database
 const db = new Database(dbPath);
