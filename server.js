@@ -518,6 +518,24 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     }
 
 
+    // ====================== CREDIT CHECK ===========================
+
+    // Determine credit cost for this generation
+    const cost = getGenerationCost(meta);
+
+    // Get current credits (auto-expiry already handled)
+    const creditInfo = getUserCredits(req.userId);
+
+    if (!creditInfo || creditInfo.credits < cost) {
+      return res.status(402).json({
+        error: "insufficient_credits",
+        credits: creditInfo ? creditInfo.credits : 0,
+        needed: cost
+      });
+    }
+
+
+
 
     // Logging the received files
     // console.log("FILES RECEIVED BY BACKEND:", files);
@@ -658,10 +676,26 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       });
     }
 
-    // -----------------------------------------------------------------------
-    // Return the base64 image to the frontend
-    // -----------------------------------------------------------------------
-    res.json({ image_base64: data.data[0].b64_json });
+    // ====================== CREDIT DEDUCTION ===========================
+
+    // Deduct credits only AFTER successful generation
+    deductCredits(req.userId, cost);
+
+    // Fetch updated credit state
+    const updatedCredits = getUserCredits(req.userId);
+
+    // ------------------------------------------------------------------
+    // Return the base64 image + updated credits
+    // ------------------------------------------------------------------
+    res.json({
+      image_base64: data.data[0].b64_json,
+      credits_remaining: updatedCredits.credits,
+      credits_expires_at: updatedCredits.credits_expires_at
+    });
+
+
+
+
   }
 
   catch (err) {
