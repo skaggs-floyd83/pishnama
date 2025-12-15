@@ -303,6 +303,11 @@ function deductCredits(userId, amount) {
   ).run(amount, userId);
 }
 
+function addDaysToNow(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
 
 
 
@@ -479,6 +484,79 @@ async function processUploadedImage(file, kind) {
     originalname: ensureJpegExtensionServer(file.originalname)
   };
 }
+
+
+// ===============================================
+// GET /api/credits
+// Returns current credit balance + expiry
+// ===============================================
+app.get("/api/credits", (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const creditInfo = getUserCredits(req.userId);
+
+  return res.json({
+    credits: creditInfo.credits,
+    credits_expires_at: creditInfo.credits_expires_at
+  });
+});
+
+
+// ===============================================
+// POST /api/buy-credits
+// Body: { package_credits: number, confirm?: true }
+// ===============================================
+app.post("/api/buy-credits", express.json(), (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const { package_credits, confirm } = req.body;
+
+  if (!Number.isInteger(package_credits) || package_credits <= 0) {
+    return res.status(400).json({ error: "invalid_package_credits" });
+  }
+
+  // Get current credit state (with auto-expiry)
+  const current = getUserCredits(req.userId);
+
+  const currentCredits = current?.credits || 0;
+
+  const preserved = Math.min(currentCredits, CREDIT_KEEP_THRESHOLD);
+  const burned = Math.max(0, currentCredits - CREDIT_KEEP_THRESHOLD);
+
+  const newTotal = preserved + package_credits;
+  const newExpiresAt = addDaysToNow(CREDIT_PACKAGE_DAYS);
+
+  // If burning occurs and user has not confirmed yet, warn first
+  if (burned > 0 && confirm !== true) {
+    return res.json({
+      ok: false,
+      requires_confirmation: true,
+      preserved,
+      burned,
+      new_total: newTotal,
+      new_expires_at: newExpiresAt
+    });
+  }
+
+  // Apply purchase
+  db.prepare(
+    `UPDATE users
+     SET credits = ?,
+         credits_expires_at = ?
+     WHERE id = ?`
+  ).run(newTotal, newExpiresAt, req.userId);
+
+  return res.json({
+    ok: true,
+    credits: newTotal,
+    credits_expires_at: newExpiresAt
+  });
+});
+
 
 
 // ============================================================================

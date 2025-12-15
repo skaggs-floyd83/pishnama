@@ -106,6 +106,13 @@
   <div class="bar">
     <button class="hamburger" id="hambtn">☰</button>
     <button class="btn" id="loginBtn" style="margin-right:10px; direction: ltr;">ورود</button>
+    <span id="credit-info" style="margin-right:10px;font-size:14px;"></span>
+    <button class="btn" id="buyCreditsBtn" style="margin-right:10px; display:none;">
+      💳 خرید اعتبار
+    </button>
+
+
+
 
     <div id="userMenu" 
      style="position:absolute; top:50px; right:10px; 
@@ -251,6 +258,14 @@ function updateLoginButton() {
 
     const token = localStorage.getItem("pishnama_user_token");
     const identifier = localStorage.getItem("pishnama_user_identifier");
+    const buyCreditsBtn = document.getElementById("buyCreditsBtn");
+    
+    if (token) {
+      buyCreditsBtn.style.display = "inline-block";
+    } else {
+      buyCreditsBtn.style.display = "none";
+    }
+
 
     if (token && identifier) {
         // User is logged in
@@ -264,6 +279,12 @@ function updateLoginButton() {
         btn.style.opacity = "1";
         userMenu.style.display = "none";
     }
+
+    
+
+
+
+
 }
 
 function forceLogoutIfInvalid(tokenResponse) {
@@ -331,6 +352,30 @@ let sofaBaseFile = null;  // keep original base sofa File for export
 let generationQuality = "high";
 
 /* =============================== Helpers ================================== */
+
+async function refreshCredits() {
+  const token = localStorage.getItem("pishnama_user_token");
+  if (!token) return;
+
+  const res = await fetch("/api/credits", {
+    headers: { "x-user-token": token }
+  });
+
+  if (!res.ok) return;
+
+  const data = await res.json();
+  
+  const el = document.getElementById("credit-info");
+  if (!el) return;
+
+  if (data.credits_expires_at) {
+    el.textContent = `اعتبار: ${data.credits} (تا ${new Date(data.credits_expires_at).toLocaleDateString("fa-IR")})`;
+  } else {
+    el.textContent = `اعتبار: ${data.credits}`;
+  }
+
+}
+
 
 /** Set <img>.src with a Blob URL; revoke URL after load to avoid leaks */
 function loadImage(el, file){
@@ -834,7 +879,9 @@ async function handlePreviewClick(){
   try {
     enterLoadingState();
     const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
+    if (!imageBase64) return;
     baseImg2.src = "data:image/png;base64," + imageBase64;
+    refreshCredits();
   } catch (err) {
     console.error(err);
     // Do NOT show "خطا..." if the user was logged out automatically
@@ -912,13 +959,24 @@ async function sendToBackend(meta, included, baseFile) {
 
     // If backend says login is required, force logout
     if (forceLogoutIfInvalid(data)) {
-        throw new Error("Unauthorized");
+      throw new Error("Unauthorized");
     }
+
+    if (data?.error === "insufficient_credits") {
+      alert(
+        `اعتبار کافی نیست.\n` +
+        `موجودی: ${data.credits}\n` +
+        `نیاز: ${data.needed}`
+      );
+      return null;
+    }
+
 
     throw new Error("Generation failed");
   }
 
   const data = await res.json();
+
 
   // If backend unexpectedly returns login_required here
   if (forceLogoutIfInvalid(data)) {
@@ -990,12 +1048,14 @@ previewBtn.addEventListener('click', handlePreviewClick);
 
 updateLoginButton();
 
+refreshCredits();
+
 </script>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
 <!-- ========================= -->
-<!-- LOGIN MODAL (HIDDEN INIT) -->
+<!-- "LOGIN MODAL" + "BUY CREDITS MODAL"  (HIDDEN INIT) -->
 <!-- ========================= -->
 <div id="loginModal" 
      style="position:fixed; inset:0; background:rgba(0,0,0,0.6); 
@@ -1018,6 +1078,26 @@ updateLoginButton();
   </div>
 </div>
 
+<div id="buyCreditsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:10000; align-items:center; justify-content:center;">
+  <div style="width:min(420px,92vw); background:#0f1629; border:1px solid #3a4367; border-radius:12px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div style="font-weight:700;">خرید اعتبار</div>
+      <button class="btn" id="buyCreditsCloseBtn" style="padding:6px 10px;">✕</button>
+    </div>
+
+    <div style="margin-top:10px; font-size:13px; color:#cbd5e1;">
+      (فعلاً بدون درگاه پرداخت واقعی) یک بسته را انتخاب کنید.
+    </div>
+
+    <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px;">
+      <button class="btn" data-pack="starter" style="width:100%;">بسته Starter (مثلاً 20 اعتبار)</button>
+      <button class="btn" data-pack="plus" style="width:100%;">بسته Plus (مثلاً 50 اعتبار)</button>
+      <button class="btn" data-pack="pro" style="width:100%;">بسته Pro (مثلاً 120 اعتبار)</button>
+    </div>
+  </div>
+</div>
+
+
 
 <script>
   
@@ -1033,6 +1113,11 @@ const verifyCodeBtn = document.getElementById("verifyCodeBtn");
 
 const userMenu = document.getElementById("userMenu");
 const logoutBtn = document.getElementById("logoutBtn");
+
+const buyCreditsBtn = document.getElementById("buyCreditsBtn");
+const buyCreditsModal = document.getElementById("buyCreditsModal");
+const buyCreditsCloseBtn = document.getElementById("buyCreditsCloseBtn");
+
 
 function isValidEmail(str) {
     return /\S+@\S+\.\S+/.test(str);
@@ -1077,12 +1162,87 @@ logoutBtn.onclick = () => {
 
     // Optional user feedback
     showToast("با موفقیت خارج شدید.");
+
+    document.getElementById("credit-info").textContent = "";
+
 };
 
-
-
-
 closeLoginModal.onclick = () => loginModal.style.display = "none";
+
+function openBuyCreditsModal() {
+  const token = localStorage.getItem("pishnama_user_token");
+  if (!token) {
+    alert("برای خرید اعتبار، لطفاً وارد شوید.");
+    loginModal.style.display = "flex";
+    return;
+  }
+  buyCreditsModal.style.display = "flex";
+}
+
+function closeBuyCreditsModal() {
+  buyCreditsModal.style.display = "none";
+}
+
+async function buyCredits(packageId, confirmBurn = false) {
+  const token = localStorage.getItem("pishnama_user_token");
+  if (!token) {
+    alert("لطفاً دوباره وارد شوید.");
+    return;
+  }
+
+  const packageMap = {
+    starter: 20,
+    plus: 50,
+    pro: 120
+  };
+
+  const res = await fetch("/api/buy-credits", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-token": token
+    },
+    body: JSON.stringify({
+      package_credits: packageMap[packageId],
+      confirm: confirmBurn
+    })
+  });
+
+  const data = await res.json().catch(() => null);
+
+  // If backend says login is required, force logout (same pattern you already use)
+  if (forceLogoutIfInvalid(data)) throw new Error("Unauthorized");
+
+  if (!res.ok) {
+    alert(data?.error || "خطا در خرید اعتبار");
+    return;
+  }
+
+  // If backend requires confirmation because >threshold credits will burn
+  if (data?.requires_confirmation) {
+    const ok = confirm(data?.message || "تعدادی از اعتبارهای فعلی شما می‌سوزد. ادامه می‌دهید؟");
+    if (!ok) return;
+    return buyCredits(packageId, true);
+  }
+
+  alert("✅ خرید اعتبار انجام شد.");
+  closeBuyCreditsModal();
+  refreshCredits();
+}
+
+buyCreditsBtn?.addEventListener("click", openBuyCreditsModal);
+buyCreditsCloseBtn?.addEventListener("click", closeBuyCreditsModal);
+
+// Click outside card closes
+buyCreditsModal?.addEventListener("click", (e) => {
+  if (e.target === buyCreditsModal) closeBuyCreditsModal();
+});
+
+// Package buttons
+buyCreditsModal?.querySelectorAll("[data-pack]")?.forEach(btn => {
+  btn.addEventListener("click", () => buyCredits(btn.dataset.pack));
+});
+
 
 // Send code
 sendCodeBtn.onclick = async () => {
@@ -1139,6 +1299,8 @@ verifyCodeBtn.onclick = async () => {
   // Update UI
   updateLoginButton();
 
+  refreshCredits();
+
 };
 
 
@@ -1154,6 +1316,13 @@ window.addEventListener("storage", (e) => {
         userMenu.style.display = "none";  // closes the user dropdown menu in other tabs after logout
         loginModal.style.display = "none";   // closes login panel in other tabs
     }
+
+    if (localStorage.getItem("pishnama_user_token")) {
+      refreshCredits();            // login in another tab
+    } else {
+      document.getElementById("credit-info").textContent = ""; // logout in another tab
+    }
+
 });
 
 
