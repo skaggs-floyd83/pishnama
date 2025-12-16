@@ -61,6 +61,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // =============================================
 
+// ====================== LOCAL STORAGE PATHS ===========================
+const OUTPUT_DIR = path.join(__dirname, "public", "creations");
+
+import fs from "fs";
+
+if (!fs.existsSync(OUTPUT_DIR)) {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+}
+
+// ====================== HISTORY CONFIG ===========================
+const HISTORY_PAGE_SIZE_DEFAULT = 12;
+const HISTORY_PAGE_SIZE_MAX = 50;
+
+
 
 const app = express();
 
@@ -505,6 +519,126 @@ app.get("/api/credits", (req, res) => {
 
 
 // ===============================================
+// GET /api/history
+// Query params:
+//   page (1-based, default = 1)
+//   pageSize (optional)
+// ===============================================
+app.get("/api/history", (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const pageSizeRaw = parseInt(req.query.pageSize || HISTORY_PAGE_SIZE_DEFAULT, 10);
+  const pageSize = Math.min(
+    Math.max(1, pageSizeRaw),
+    HISTORY_PAGE_SIZE_MAX
+  );
+
+  const offset = (page - 1) * pageSize;
+
+  // Total count (for pagination UI later)
+  const totalRow = db.prepare(`
+    SELECT COUNT(*) AS cnt
+    FROM creations
+    WHERE user_id = ?
+  `).get(req.userId);
+
+  // Fetch page of creations
+  const rows = db.prepare(`
+    SELECT
+      id,
+      mode,
+      mode_selection,
+      quality,
+      output_image_path,
+      cost_credits,
+      created_at
+    FROM creations
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(req.userId, pageSize, offset);
+
+  return res.json({
+    page,
+    pageSize,
+    total: totalRow.cnt,
+    items: rows
+  });
+});
+
+
+
+// ===============================================
+// GET /api/creation/:id
+// Full creation details (with fabrics)
+// ===============================================
+app.get("/api/creation/:id", (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const creationId = Number(req.params.id);
+  if (!creationId) {
+    return res.status(400).json({ error: "invalid_creation_id" });
+  }
+
+  // ---- fetch creation ----
+  const creation = db.prepare(`
+    SELECT
+      id,
+      mode,
+      mode_selection,
+      quality,
+      output_image_path,
+      cost_credits,
+      created_at,
+      meta_json
+    FROM creations
+    WHERE id = ? AND user_id = ?
+  `).get(creationId, req.userId);
+
+  if (!creation) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  // ---- fetch fabrics linked to this creation ----
+  const fabrics = db.prepare(`
+    SELECT
+      f.id,
+      f.image_path,
+      cf.fabric_role,
+      cf.meta_json
+    FROM creation_fabrics cf
+    JOIN fabrics f ON f.id = cf.fabric_id
+    WHERE cf.creation_id = ?
+    ORDER BY cf.id ASC
+  `).all(creationId);
+
+  // ---- normalize response ----
+  return res.json({
+    id: creation.id,
+    mode: creation.mode,
+    mode_selection: creation.mode_selection,
+    quality: creation.quality,
+    output_image_path: creation.output_image_path,
+    cost_credits: creation.cost_credits,
+    created_at: creation.created_at,
+    meta: JSON.parse(creation.meta_json || "{}"),
+    fabrics: fabrics.map(f => ({
+      id: f.id,
+      image_path: f.image_path,
+      role: f.fabric_role,
+      meta: JSON.parse(f.meta_json || "{}")
+    }))
+  });
+});
+
+
+
+// ===============================================
 // POST /api/buy-credits
 // Body: { package_credits: number, confirm?: true }
 // ===============================================
@@ -753,6 +887,119 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         error: "No image returned from OpenAI"
       });
     }
+
+    // ====================== SAVE OUTPUT IMAGE ===========================
+
+    // Create user-specific folder
+    const userDir = path.join(OUTPUT_DIR, String(req.userId));
+    if (!fs.existsSync(userDir)) {
+      fs.mkdirSync(userDir, { recursive: true });
+    }
+
+    // Generate filename
+    const filename = `creation_${Date.now()}.png`;
+    const outputPath = path.join(userDir, filename);
+
+    // Decode base64 and write file
+    const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
+    fs.writeFileSync(outputPath, imageBuffer);
+
+    // Store relative path for DB
+    const outputImagePath = `/creations/${req.userId}/${filename}`;
+
+    
+    // ====================== SAVE CREATION RECORD ===========================
+
+    const insert = db.prepare(`
+      INSERT INTO creations (
+        user_id,
+        mode,
+        mode_selection,
+        quality,
+        base_image_path,
+        output_image_path,
+        meta_json,
+        cost_credits
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = insert.run(
+      req.userId,
+      meta.mode,
+      meta.mode_selection,
+      meta.quality,
+      null, // base_image_path (can be added later)
+      outputImagePath,
+      JSON.stringify(meta),
+      cost
+    );
+
+    const creationId = result.lastInsertRowid;
+
+    const insertFabric = db.prepare(`
+      INSERT INTO fabrics (
+        user_id,
+        image_path,
+        created_at
+      )
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+    `);
+
+    const insertCreationFabric = db.prepare(`
+      INSERT INTO creation_fabrics (
+        creation_id,
+        fabric_id,
+        fabric_role,
+        meta_json
+      )
+      VALUES (?, ?, ?, ?)
+    `);
+
+    let fabricIndex = 1;
+
+    for (const f of processedFiles) {
+      if (f.fieldname === "base_image") continue;
+
+      // ---- save fabric image file ----
+      const fabricFilename = `fabric_${Date.now()}_${fabricIndex}.jpg`;
+      const fabricPath = path.join(userDir, fabricFilename);
+
+      fs.writeFileSync(fabricPath, f.buffer);
+
+      const fabricImagePath = `/creations/${req.userId}/${fabricFilename}`;
+
+      // ---- insert fabric row ----
+      const fabricResult = insertFabric.run(
+        req.userId,
+        fabricImagePath
+      );
+
+      const fabricId = fabricResult.lastInsertRowid;
+
+      // ---- determine fabric role ----
+      const fabricRole = `fabric_${String(fabricIndex).padStart(2, "0")}`;
+
+      // ---- attach fabric to creation ----
+      insertCreationFabric.run(
+        creationId,
+        fabricId,
+        fabricRole,
+        JSON.stringify(
+          meta.mode === "sofa"
+            ? meta.fabrics.find(x => x.id === fabricRole) || {}
+            : { mode_selection: meta.mode_selection }
+        )
+      );
+
+      fabricIndex++;
+    }
+
+
+
+
+
+
 
     // ====================== CREDIT DEDUCTION ===========================
 
