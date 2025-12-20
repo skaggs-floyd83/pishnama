@@ -365,7 +365,7 @@ app.post("/api/request-code", express.json(), async (req, res) => {
     if (isEmail(identifier)) {
       await sendLoginEmail(identifier, code);
     } else {
-      await sendLoginSms(identifier, code);
+      // await sendLoginSms(identifier, code);
     }
 
     return res.json({ ok: true });
@@ -592,6 +592,7 @@ app.get("/api/creation/:id", (req, res) => {
       mode,
       mode_selection,
       quality,
+      base_image_path,
       output_image_path,
       cost_credits,
       created_at,
@@ -605,17 +606,42 @@ app.get("/api/creation/:id", (req, res) => {
   }
 
   // ---- fetch fabrics linked to this creation ----
-  const fabrics = db.prepare(`
+  const fabricRows = db.prepare(`
     SELECT
-      f.id,
-      f.image_path,
-      cf.fabric_role,
-      cf.meta_json
+      f.id AS fabric_id,
+      f.file_path AS file_path,
+      cf.ord AS ord,
+      cf.part AS part
     FROM creation_fabrics cf
     JOIN fabrics f ON f.id = cf.fabric_id
     WHERE cf.creation_id = ?
-    ORDER BY cf.id ASC
+    ORDER BY cf.ord ASC, cf.id ASC
   `).all(creationId);
+
+
+  // Rebuild frontend-compatible fabric objects from ord + part
+  const grouped = new Map(); // key = `${ord}:${fabric_id}`
+
+  for (const r of fabricRows) {
+    const key = `${r.ord}:${r.fabric_id}`;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        id: r.fabric_id,
+        image_path: r.file_path, // frontend expects image_path
+        role: `fabric_${String(r.ord).padStart(2, "0")}`,
+        meta: { parts: [] }
+      });
+    }
+
+    if (r.part) {
+      grouped.get(key).meta.parts.push(r.part);
+    }
+  }
+
+  const fabrics = Array.from(grouped.values());
+
+
 
   // ---- normalize response ----
   return res.json({
@@ -623,16 +649,12 @@ app.get("/api/creation/:id", (req, res) => {
     mode: creation.mode,
     mode_selection: creation.mode_selection,
     quality: creation.quality,
+    base_image_path: creation.base_image_path,
     output_image_path: creation.output_image_path,
     cost_credits: creation.cost_credits,
     created_at: creation.created_at,
     meta: JSON.parse(creation.meta_json || "{}"),
-    fabrics: fabrics.map(f => ({
-      id: f.id,
-      image_path: f.image_path,
-      role: f.fabric_role,
-      meta: JSON.parse(f.meta_json || "{}")
-    }))
+    fabrics
   });
 });
 
@@ -804,7 +826,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       outQuality = "high";
       // size = "1024x1024";
     }
-
+    // model = "gemini-3-pro-image-preview";
 
     // -----------------------------------------------------------------------
     // Build the form to send to OpenAI
@@ -907,6 +929,23 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // Store relative path for DB
     const outputImagePath = `/creations/${req.userId}/${filename}`;
 
+    // ====================== SAVE BASE IMAGE ===========================
+
+    // Find the uploaded base image
+    const baseFile = processedFiles.find(f => f.fieldname === "base_image");
+    let baseImagePath = null;
+
+    if (baseFile) {
+      const baseFilename = `base_${Date.now()}.jpg`;
+      const basePath = path.join(userDir, baseFilename);
+
+      fs.writeFileSync(basePath, baseFile.buffer);
+
+      // Store relative path for DB (served by your /creations static route)
+      baseImagePath = `/creations/${req.userId}/${baseFilename}`;
+    }
+
+
     
     // ====================== SAVE CREATION RECORD ===========================
 
@@ -929,7 +968,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       meta.mode,
       meta.mode_selection,
       meta.quality,
-      null, // base_image_path (can be added later)
+      baseImagePath,
       outputImagePath,
       JSON.stringify(meta),
       cost
@@ -940,7 +979,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const insertFabric = db.prepare(`
       INSERT INTO fabrics (
         user_id,
-        image_path,
+        file_path,
         created_at
       )
       VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -950,8 +989,8 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       INSERT INTO creation_fabrics (
         creation_id,
         fabric_id,
-        fabric_role,
-        meta_json
+        ord,
+        part
       )
       VALUES (?, ?, ?, ?)
     `);
@@ -977,20 +1016,33 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
       const fabricId = fabricResult.lastInsertRowid;
 
-      // ---- determine fabric role ----
-      const fabricRole = `fabric_${String(fabricIndex).padStart(2, "0")}`;
+      // ord is the fabric order: 1, 2, 3, ...
+      const ord = fabricIndex;
 
-      // ---- attach fabric to creation ----
-      insertCreationFabric.run(
-        creationId,
-        fabricId,
-        fabricRole,
-        JSON.stringify(
-          meta.mode === "sofa"
-            ? meta.fabrics.find(x => x.id === fabricRole) || {}
-            : { mode_selection: meta.mode_selection }
-        )
-      );
+      if (meta.mode === "sofa") {
+        const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
+        const mf = meta.fabrics.find(x => x.id === fabricKey);
+        const parts = Array.isArray(mf?.parts) ? mf.parts : [];
+
+        // If no parts selected, still insert one row
+        if (parts.length === 0) {
+          insertCreationFabric.run(creationId, fabricId, ord, null);
+        } else {
+          // One row per part (back / seat / arms)
+          for (const part of parts) {
+            insertCreationFabric.run(creationId, fabricId, ord, part);
+          }
+        }
+      } else {
+        // pillows mode: store mode_selection in `part`
+        insertCreationFabric.run(
+          creationId,
+          fabricId,
+          ord,
+          meta.mode_selection || "pillows"
+        );
+      }
+
 
       fabricIndex++;
     }

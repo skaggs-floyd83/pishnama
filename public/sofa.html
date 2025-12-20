@@ -270,7 +270,9 @@ function updateLoginButton() {
     if (historyBtn) historyBtn.style.display = "none";
     if (userMenu) userMenu.style.display = "none";
     if (creditInfo) creditInfo.textContent = "";
-    
+    // NEW: hide credit-info completely when logged out (expiry is inside this text)
+    if (creditInfo) creditInfo.style.display = "none";
+
 
 
 
@@ -282,9 +284,11 @@ function updateLoginButton() {
     
     
     if (token) {
+      if (creditInfo) creditInfo.style.display = "inline";
       if (buyCreditsBtn) buyCreditsBtn.style.display = "inline-block";
       if (historyBtn) historyBtn.style.display = "inline-block";
     } else {
+      if (creditInfo) { creditInfo.textContent = ""; creditInfo.style.display = "none"; }
       if (buyCreditsBtn) buyCreditsBtn.style.display = "none";
       if (historyBtn) historyBtn.style.display = "none";
     }
@@ -328,6 +332,33 @@ function forceLogoutIfInvalid(tokenResponse) {
     }
     return false;
 }
+
+async function fetchWithAuth(url, options = {}) {
+  const token = localStorage.getItem("pishnama_user_token");
+
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      "x-user-token": token || ""
+    }
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (_) {}
+
+  // Centralized auth invalidation
+  if (res.status === 401 || data?.error === "login_required") {
+    forceLogoutIfInvalid(data);
+    throw new Error("Unauthorized");
+  }
+
+  return { res, data };
+}
+
+
 
 
 // Maps 1..3 to Persian ordinals: اول / دوم / سوم
@@ -387,14 +418,15 @@ async function refreshCredits() {
   const token = localStorage.getItem("pishnama_user_token");
   if (!token) return;
 
-  const res = await fetch("/api/credits", {
-    headers: { "x-user-token": token }
-  });
-
-  if (!res.ok) return;
-
-  const data = await res.json();
   
+  let data;
+  try {
+    ({ data } = await fetchWithAuth("/api/credits"));
+  } catch {
+    return;
+  }
+
+
   const el = document.getElementById("credit-info");
   if (!el) return;
 
@@ -403,7 +435,7 @@ async function refreshCredits() {
   } else {
     el.textContent = `اعتبار: ${data.credits}`;
   }
-
+  el.style.display = "inline";
 }
 
 
@@ -424,17 +456,17 @@ async function loadHistory(reset = false) {
     document.getElementById("historyGrid").innerHTML = "";
   }
 
-  const res = await fetch(
-    `/api/history?page=${historyPage}&pageSize=${HISTORY_PAGE_SIZE}`,
-    { headers: { "x-user-token": token } }
-  );
-
-  if (!res.ok) {
-    alert("خطا در دریافت تاریخچه");
+  let data;
+  try {
+    ({ data } = await fetchWithAuth(
+      `/api/history?page=${historyPage}&pageSize=${HISTORY_PAGE_SIZE}`
+    ));
+  } catch {
     return;
   }
 
-  const data = await res.json();
+
+
   historyTotal = data.total;
 
   for (const item of data.items) {
@@ -446,7 +478,9 @@ async function loadHistory(reset = false) {
 
     div.innerHTML = `
       <img src="${item.output_image_path}"
-           style="width:100%; border-radius:6px; display:block;">
+           data-creation-id="${item.id}"
+           class="history-thumb"
+           style="width:100%; border-radius:6px; display:block; cursor:pointer;">
       <div style="margin-top:6px;">
         <div>نوع: ${item.mode}</div>
         <div>کیفیت: ${item.quality}</div>
@@ -1032,45 +1066,27 @@ async function sendToBackend(meta, included, baseFile) {
   // to be removed in the production version
   console.log("Outgoing FormData:", [...form.entries()]);
 
-  const res = await fetch("/api/generate", {
-    method: "POST",
-    headers: {
-        "x-user-token": localStorage.getItem("pishnama_user_token") || ""
-    },
-    body: form
-  })
-
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-
-    // If backend says login is required, force logout
-    if (forceLogoutIfInvalid(data)) {
-      throw new Error("Unauthorized");
-    }
-
-    if (data?.error === "insufficient_credits") {
-      alert(
-        `اعتبار کافی نیست.\n` +
-        `موجودی: ${data.credits}\n` +
-        `نیاز: ${data.needed}`
-      );
-      return null;
-    }
-
-
-    throw new Error("Generation failed");
+  let data;
+  try {
+    ({ data } = await fetchWithAuth("/api/generate", {
+      method: "POST",
+      body: form
+    }));
+  } catch {
+    throw new Error("Unauthorized");
   }
 
-  const data = await res.json();
 
-
-  // If backend unexpectedly returns login_required here
-  if (forceLogoutIfInvalid(data)) {
-      throw new Error("Unauthorized");
+  if (data?.error === "insufficient_credits") {
+    alert(
+      `اعتبار کافی نیست.\n` +
+      `موجودی: ${data.credits}\n` +
+      `نیاز: ${data.needed}`
+    );
+    return null;
   }
-
   return data.image_base64;
+
 
 }
 
@@ -1142,7 +1158,7 @@ refreshCredits();
 <div id="toast" role="status" aria-live="polite"></div>
 
 <!-- ========================= -->
-<!-- "LOGIN MODAL" + "BUY CREDITS MODAL"  (HIDDEN INIT) -->
+<!-- "LOGIN MODAL" + "BUY CREDITS MODAL" + "HISTORY MODAL" + "CREATION PREVIEW MODAL" (HIDDEN INIT) -->
 <!-- ========================= -->
 <div id="loginModal" 
      style="position:fixed; inset:0; background:rgba(0,0,0,0.6); 
@@ -1201,6 +1217,30 @@ refreshCredits();
   </div>
 </div>
 
+<div id="creationPreviewModal"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:10001; overflow:auto;">
+  <div style="max-width:900px; margin:40px auto; background:#0f1629; border-radius:12px; padding:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-weight:700;">پیش‌نمایش تولید</div>
+      <button class="btn" id="creationPreviewCloseBtn">✕</button>
+    </div>
+
+    <img id="creationPreviewImage"
+         style="width:100%; margin-top:12px; border-radius:10px; display:block;">
+
+    <div id="creationPreviewMeta"
+         style="margin-top:12px; font-size:13px; color:#cbd5e1;"></div>
+
+    <div id="creationPreviewFabrics"
+         style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+
+    <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px;">
+      <button class="btn" id="reuseCreationBtn">♻️ استفاده مجدد</button>
+    </div>
+  </div>
+</div>
+
+
 
 
 
@@ -1223,6 +1263,16 @@ const logoutBtn = document.getElementById("logoutBtn");
 const buyCreditsBtn = document.getElementById("buyCreditsBtn");
 const buyCreditsModal = document.getElementById("buyCreditsModal");
 const buyCreditsCloseBtn = document.getElementById("buyCreditsCloseBtn");
+
+const creationPreviewModal = document.getElementById("creationPreviewModal");
+const creationPreviewCloseBtn = document.getElementById("creationPreviewCloseBtn");
+const creationPreviewImage = document.getElementById("creationPreviewImage");
+const creationPreviewMeta = document.getElementById("creationPreviewMeta");
+const creationPreviewFabrics = document.getElementById("creationPreviewFabrics");
+const reuseCreationBtn = document.getElementById("reuseCreationBtn");
+
+let lastPreviewedCreation = null;
+
 
 
 // Wire buttons & modal behavior (history)
@@ -1248,6 +1298,220 @@ historyLoadMoreBtn.onclick = () => {
 historyModal.addEventListener("click", (e) => {
   if (e.target === historyModal) historyModal.style.display = "none";
 });
+
+document.addEventListener("click", (e) => {
+  // --- 1) History thumbnail click ---
+  const thumb = e.target.closest(".history-thumb");
+  if (thumb) {
+    openCreationPreview(thumb.dataset.creationId);
+    return; // IMPORTANT: stop here so menu logic does not interfere
+  }
+
+  // --- 2) Close user menu when clicking outside ---
+  if (
+    userMenu &&
+    !userMenu.contains(e.target) &&
+    e.target !== loginBtn
+  ) {
+    userMenu.style.display = "none";
+  }
+});
+
+
+
+
+async function openCreationPreview(creationId) {
+  const token = localStorage.getItem("pishnama_user_token");
+  if (!token) return;
+
+  let data;
+  try {
+    ({ data } = await fetchWithAuth(`/api/creation/${creationId}`));
+  } catch {
+    return;
+  }
+
+
+  lastPreviewedCreation = data;
+
+  creationPreviewImage.src = data.output_image_path;
+
+  creationPreviewMeta.textContent =
+    `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +
+    new Date(data.created_at).toLocaleDateString("fa-IR");
+
+  creationPreviewFabrics.innerHTML = "";
+  for (const f of data.fabrics) {
+    const img = document.createElement("img");
+    img.src = f.image_path;
+    img.style.width = "80px";
+    img.style.borderRadius = "6px";
+    img.title = f.role;
+    creationPreviewFabrics.appendChild(img);
+  }
+
+  creationPreviewModal.style.display = "block";
+}
+
+creationPreviewCloseBtn.onclick = () => {
+  creationPreviewModal.style.display = "none";
+};
+
+creationPreviewModal.addEventListener("click", (e) => {
+  if (e.target === creationPreviewModal) {
+    creationPreviewModal.style.display = "none";
+  }
+});
+
+reuseCreationBtn.onclick = () => {
+  if (!lastPreviewedCreation) return;
+
+  const c = lastPreviewedCreation;
+
+  // Always restore quality toggle locally (safe)
+  generationQuality = (c.quality === "standard") ? "standard" : "high";
+  if (qToggle) {
+    [...qToggle.children].forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.q === generationQuality);
+    });
+  }
+
+  // IMPORTANT: define what THIS page is (sofa.html = "sofa" in your current implementation)
+  const THIS_PAGE_MODE = "sofa";
+
+  // If creation belongs to another mode, jump to the correct page and restore there
+  if (c.mode && c.mode !== THIS_PAGE_MODE) {
+    localStorage.setItem("pishnama_restore_creation_id", String(c.id));
+    localStorage.setItem("pishnama_restore_target_mode", c.mode);
+
+    // Close modal before navigation
+    creationPreviewModal.style.display = "none";
+
+    // Navigate
+    if (c.mode === "sofa") {
+      window.location.href = "sofa.html";
+    } else if (c.mode === "pillows") {
+      window.location.href = "pillows.html";
+    } else {
+      // Unknown future mode (carpet/curtain/...) — don’t crash
+      alert("این نوع تولید هنوز در این صفحه پشتیبانی نمی‌شود.");
+    }
+    return;
+  }
+
+  // Same-mode restore (safe)
+  if (c.mode === "pillows") {
+    restorePillowsFromCreation(c);
+  } else if (c.mode === "sofa") {
+    restoreSofaFromCreation(c);
+  }
+
+  creationPreviewModal.style.display = "none";
+};
+
+
+
+async function fetchUrlAsFile(url, filename) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Failed to fetch file: " + url);
+  const blob = await res.blob();
+  return new File([blob], filename, { type: blob.type || "image/jpeg" });
+}
+
+async function restoreSofaFromCreation(c) {
+  // Must have base image
+  if (!c.base_image_path) {
+    alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
+    return;
+  }
+
+  // 1) Go to fabrics step UI
+  gotoFabrics();
+
+  // 2) Restore base image preview + file
+  const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
+  sofaBaseFile = baseFile;          // your existing variable in sofa workflow
+  sofaChosen = true;                // your existing state
+  loadImage(sofaThumb, baseFile);   // stage 1 preview
+  loadImage(baseImg2, baseFile);    // stage 2 preview
+
+  // 3) Rebuild fabrics array from server list
+  fabrics = [];
+  for (const f of c.fabrics) {
+    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
+    fabrics.push({
+      id: f.role,                 // matches fabric_01 / fabric_02 / ...
+      url: URL.createObjectURL(file),
+      file,
+      parts: new Set()            // will fill below
+    });
+  }
+
+  // 4) Restore part assignment using meta (server already returns parsed meta)
+  assigned = { back: null, seat: null, arms: null };
+
+  // If you stored sofa fabric-part mapping inside meta.fabrics[*].parts, restore it:
+  if (c.meta && Array.isArray(c.meta.fabrics)) {
+    for (const mf of c.meta.fabrics) {
+      const fab = fabrics.find(x => x.id === mf.id);
+      if (!fab) continue;
+
+      if (Array.isArray(mf.parts)) {
+        mf.parts.forEach(p => fab.parts.add(p));
+      }
+
+      // Keep assigned[] consistent with parts
+      for (const p of ["back", "seat", "arms"]) {
+        if (fab.parts.has(p)) assigned[p] = fab.id;
+      }
+    }
+  }
+
+  // 5) Reset current fabric index and sync UI
+  idx = 0;
+  updateUI();
+}
+
+async function restorePillowsFromCreation(c) {
+  if (!c.base_image_path) {
+    alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
+    return;
+  }
+
+  // 1) Go to fabrics step (pillows workflow also uses it)
+  gotoFabrics();
+
+  // 2) Restore base image preview + file
+  const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
+  basePillowFile = baseFile;         // use your pillows base-file variable name
+  pillowChosen = true;               // your pillows chosen flag
+  loadImage(basePillowImg, baseFile);
+  loadImage(basePillowImg2, baseFile);
+
+  // 3) Restore mode selection (single/random) from c.mode_selection
+  if (typeof c.mode_selection === "string") {
+    modeSelection = c.mode_selection;  // your existing state var
+    // update any UI highlight for mode buttons here if you have them
+  }
+
+  // 4) Restore fabrics
+  fabrics = [];
+  for (const f of c.fabrics) {
+    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
+    fabrics.push({
+      id: f.role,
+      url: URL.createObjectURL(file),
+      file
+    });
+  }
+
+  idx = 0;
+  updateUI();
+}
+
+
+
+
 
 
 
@@ -1299,6 +1563,10 @@ logoutBtn.onclick = () => {
     document.getElementById("historyGrid").innerHTML = "";
     historyPage = 1;
 
+    lastPreviewedCreation = null;
+    creationPreviewModal.style.display = "none";
+
+
 };
 
 closeLoginModal.onclick = () => loginModal.style.display = "none";
@@ -1318,51 +1586,39 @@ function closeBuyCreditsModal() {
 }
 
 async function buyCredits(packageId, confirmBurn = false) {
-  const token = localStorage.getItem("pishnama_user_token");
-  if (!token) {
-    alert("لطفاً دوباره وارد شوید.");
-    return;
+  let data;
+  try {
+    ({ data } = await fetchWithAuth("/api/buy-credits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        package: packageId,
+        confirm_burn: confirmBurn
+      })
+    }));
+  } catch {
+    return; // login_required already handled
   }
 
-  const packageMap = {
-    starter: 20,
-    plus: 50,
-    pro: 120
-  };
-
-  const res = await fetch("/api/buy-credits", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-user-token": token
-    },
-    body: JSON.stringify({
-      package_credits: packageMap[packageId],
-      confirm: confirmBurn
-    })
-  });
-
-  const data = await res.json().catch(() => null);
-
-  // If backend says login is required, force logout (same pattern you already use)
-  if (forceLogoutIfInvalid(data)) throw new Error("Unauthorized");
-
-  if (!res.ok) {
-    alert(data?.error || "خطا در خرید اعتبار");
-    return;
-  }
-
-  // If backend requires confirmation because >threshold credits will burn
   if (data?.requires_confirmation) {
-    const ok = confirm(data?.message || "تعدادی از اعتبارهای فعلی شما می‌سوزد. ادامه می‌دهید؟");
+    const ok = confirm(
+      data?.message ||
+      "تعدادی از اعتبارهای فعلی شما می‌سوزد. ادامه می‌دهید؟"
+    );
     if (!ok) return;
     return buyCredits(packageId, true);
+  }
+
+  if (data?.error) {
+    alert(data.error);
+    return;
   }
 
   alert("✅ خرید اعتبار انجام شد.");
   closeBuyCreditsModal();
   refreshCredits();
 }
+
 
 buyCreditsBtn?.addEventListener("click", openBuyCreditsModal);
 buyCreditsCloseBtn?.addEventListener("click", closeBuyCreditsModal);
@@ -1438,11 +1694,7 @@ verifyCodeBtn.onclick = async () => {
 };
 
 
-document.addEventListener("click", (e) => {
-    if (!userMenu.contains(e.target) && e.target !== loginBtn) {
-        userMenu.style.display = "none";
-    }
-});
+
 
 window.addEventListener("storage", (e) => {
     if (e.key === "pishnama_user_token") {
@@ -1454,10 +1706,54 @@ window.addEventListener("storage", (e) => {
     if (localStorage.getItem("pishnama_user_token")) {
       refreshCredits();            // login in another tab
     } else {
-      document.getElementById("credit-info").textContent = ""; // logout in another tab
+      const ci = document.getElementById("credit-info");
+      if (ci) { ci.textContent = ""; ci.style.display = "none"; }
     }
 
+
 });
+
+(async function autoRestoreIfRequested() {
+  const token = localStorage.getItem("pishnama_user_token");
+  const id = localStorage.getItem("pishnama_restore_creation_id");
+  const targetMode = localStorage.getItem("pishnama_restore_target_mode");
+
+  if (!token || !id) return;
+
+  // This page’s mode (same constant you used above)
+  const THIS_PAGE_MODE = "sofa";
+  if (targetMode && targetMode !== THIS_PAGE_MODE) return;
+
+  try {
+    // Clear first to prevent loops if something errors
+    localStorage.removeItem("pishnama_restore_creation_id");
+    localStorage.removeItem("pishnama_restore_target_mode");
+
+    // Fetch full creation and restore    
+    let c;
+    try {
+      ({ data: c } = await fetchWithAuth(`/api/creation/${id}`));
+    } catch {
+      return;
+    }
+
+
+    
+    // Apply quality UI
+    generationQuality = (c.quality === "standard") ? "standard" : "high";
+    if (qToggle) {
+      [...qToggle.children].forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.q === generationQuality);
+      });
+    }
+
+    if (c.mode === "pillows") {
+      await restorePillowsFromCreation(c);
+    }
+  } catch (e) {
+    console.error("Auto-restore failed:", e);
+  }
+})();
 
 
 </script>
