@@ -1411,61 +1411,16 @@ async function fetchUrlAsFile(url, filename) {
   return new File([blob], filename, { type: blob.type || "image/jpeg" });
 }
 
-async function restoreSofaFromCreation(c) {
-  // Must have base image
-  if (!c.base_image_path) {
-    alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
-    return;
-  }
-
-  // 1) Go to fabrics step UI
-  gotoFabrics();
-
-  // 2) Restore base image preview + file
-  const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
-  sofaBaseFile = baseFile;          // your existing variable in sofa workflow
-  sofaChosen = true;                // your existing state
-  loadImage(sofaThumb, baseFile);   // stage 1 preview
-  loadImage(baseImg2, baseFile);    // stage 2 preview
-
-  // 3) Rebuild fabrics array from server list
-  fabrics = [];
-  for (const f of c.fabrics) {
-    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
-    fabrics.push({
-      id: f.role,                 // matches fabric_01 / fabric_02 / ...
-      url: URL.createObjectURL(file),
-      file,
-      parts: new Set()            // will fill below
-    });
-  }
-
-  // 4) Restore part assignment using meta (server already returns parsed meta)
-  assigned = { back: null, seat: null, arms: null };
-
-  // If you stored sofa fabric-part mapping inside meta.fabrics[*].parts, restore it:
-  if (c.meta && Array.isArray(c.meta.fabrics)) {
-    for (const mf of c.meta.fabrics) {
-      const fab = fabrics.find(x => x.id === mf.id);
-      if (!fab) continue;
-
-      if (Array.isArray(mf.parts)) {
-        mf.parts.forEach(p => fab.parts.add(p));
-      }
-
-      // Keep assigned[] consistent with parts
-      for (const p of ["back", "seat", "arms"]) {
-        if (fab.parts.has(p)) assigned[p] = fab.id;
-      }
-    }
-  }
-
-  // 5) Reset current fabric index and sync UI
-  idx = 0;
-  updateUI();
-}
-
 async function restorePillowsFromCreation(c) {
+  // HARD RESET before restore
+  fabrics = [];
+  idx = 0;
+  modeSelection = "single";
+  sofaChosen = false;
+  sofaBaseFile = null;
+
+
+
   if (!c.base_image_path) {
     alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
     return;
@@ -1476,10 +1431,11 @@ async function restorePillowsFromCreation(c) {
 
   // 2) Restore base image preview + file
   const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
-  basePillowFile = baseFile;         // use your pillows base-file variable name
-  pillowChosen = true;               // your pillows chosen flag
-  loadImage(basePillowImg, baseFile);
-  loadImage(basePillowImg2, baseFile);
+  sofaBaseFile = baseFile;         // use your pillows base-file variable name
+  sofaChosen = true;               // your pillows chosen flag
+  loadImage(sofaThumb, baseFile);
+  loadImage(baseImg2, baseFile);
+
 
   // 3) Restore mode selection (single/random) from c.mode_selection
   if (typeof c.mode_selection === "string") {

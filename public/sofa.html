@@ -1452,6 +1452,12 @@ async function fetchUrlAsFile(url, filename) {
 }
 
 async function restoreSofaFromCreation(c) {
+  // HARD RESET before restore
+  fabrics = [];
+  idx = 0;
+  sofaChosen = false;
+  sofaBaseFile = null;
+
   // Must have base image
   if (!c.base_image_path) {
     alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
@@ -1505,42 +1511,6 @@ async function restoreSofaFromCreation(c) {
   updateUI();
 }
 
-async function restorePillowsFromCreation(c) {
-  if (!c.base_image_path) {
-    alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
-    return;
-  }
-
-  // 1) Go to fabrics step (pillows workflow also uses it)
-  gotoFabrics();
-
-  // 2) Restore base image preview + file
-  const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
-  basePillowFile = baseFile;         // use your pillows base-file variable name
-  pillowChosen = true;               // your pillows chosen flag
-  loadImage(basePillowImg, baseFile);
-  loadImage(basePillowImg2, baseFile);
-
-  // 3) Restore mode selection (single/random) from c.mode_selection
-  if (typeof c.mode_selection === "string") {
-    modeSelection = c.mode_selection;  // your existing state var
-    // update any UI highlight for mode buttons here if you have them
-  }
-
-  // 4) Restore fabrics
-  fabrics = [];
-  for (const f of c.fabrics) {
-    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
-    fabrics.push({
-      id: f.role,
-      url: URL.createObjectURL(file),
-      file
-    });
-  }
-
-  idx = 0;
-  updateUI();
-}
 
 
 
@@ -1782,8 +1752,8 @@ window.addEventListener("storage", (e) => {
       });
     }
 
-    if (c.mode === "pillows") {
-      await restorePillowsFromCreation(c);
+    if (c.mode === "sofa") {
+      await restoreSofaFromCreation(c);
     }
   } catch (e) {
     console.error("Auto-restore failed:", e);
