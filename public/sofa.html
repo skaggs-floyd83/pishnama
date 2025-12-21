@@ -1391,6 +1391,12 @@ creationPreviewModal.addEventListener("click", (e) => {
 });
 
 reuseCreationBtn.onclick = () => {
+  // ALWAYS close history when reusing a creation
+  if (historyModal) {
+    historyModal.style.display = "none";
+  }
+
+
   if (!lastPreviewedCreation) return;
 
   const c = lastPreviewedCreation;
