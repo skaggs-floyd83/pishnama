@@ -324,7 +324,7 @@ function updateLoginButton() {
 
 }
 
-function forceLogoutIfInvalid(tokenResponse) {
+function forceLogoutIfInvalid(tokenResponse, authOptions = {}) {
     if (tokenResponse && tokenResponse.error === "login_required") {
         // Remove invalid credentials
         localStorage.removeItem("pishnama_user_token");
@@ -334,7 +334,10 @@ function forceLogoutIfInvalid(tokenResponse) {
         updateLoginButton();
 
         // Inform the user
-        showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        // Show toast only if NOT silent
+        if (!authOptions.silent) {
+          showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        }
 
         return true;  // indicates logout happened
     }
@@ -359,7 +362,7 @@ async function fetchWithAuth(url, options = {}) {
 
   // Centralized auth invalidation
   if (res.status === 401 || data?.error === "login_required") {
-    forceLogoutIfInvalid(data);
+    forceLogoutIfInvalid(data, options?.auth || {});
     throw new Error("Unauthorized");
   }
 
@@ -426,7 +429,9 @@ async function refreshCredits() {
 
   let data;
   try {
-    ({ data } = await fetchWithAuth("/api/credits"));
+    ({ data } = await fetchWithAuth("/api/credits", {
+      auth: { silent: true }
+    }));
   } catch {
     return;
   }
@@ -936,6 +941,26 @@ async function handlePreviewClick(){
       loginModal.style.display = "flex";   // show the login modal automatically
       return;
   }
+
+  // Compute required cost on client
+  const cost = (generationQuality === "high") ? 2 : 1;
+  // Call credits endpoint BEFORE validation & uploads
+  let creditData;
+  try {
+    ({ data: creditData } = await fetchWithAuth("/api/credits"));
+  } catch {
+    return; // login_required already handled
+  }
+
+  if (creditData.credits < cost) {
+    alert(
+      `اعتبار کافی نیست.\n` +
+      `موجودی: ${creditData.credits}\n` +
+      `نیاز: ${cost}`
+    );
+    return;
+  }
+
 
 
   const {errors, warnings} = validateBeforeGenerateSofa();
@@ -1691,7 +1716,9 @@ window.addEventListener("storage", (e) => {
     // Fetch full creation and restore
     let c;
     try {
-      ({ data: c } = await fetchWithAuth(`/api/creation/${id}`));
+      ({ data: c } = await fetchWithAuth(`/api/creation/${id}`, {
+        auth: { silent: true }
+      }));
     } catch {
       return;
     }
