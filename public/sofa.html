@@ -318,23 +318,25 @@ function updateLoginButton() {
 
 function forceLogoutIfInvalid(tokenResponse, authOptions = {}) {
     if (tokenResponse && tokenResponse.error === "login_required") {
-        // Remove invalid credentials
+        // Clear credentials
         localStorage.removeItem("pishnama_user_token");
         localStorage.removeItem("pishnama_user_identifier");
 
-        // Update UI
-        updateLoginButton();
-
-        // Inform the user
-        // Show toast only if NOT silent
-        if (!authOptions.silent) {
-          showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        // If this is an automatic logout (page load / background fetch),
+        // do a hard refresh to guarantee a clean UI state.
+        if (authOptions.silent) {
+            window.location.reload();
+            return true;
         }
 
-        return true;  // indicates logout happened
+        // User-visible logout (no refresh)
+        updateLoginButton();
+        showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        return true;
     }
     return false;
 }
+
 
 
 
@@ -1432,14 +1434,10 @@ reuseCreationBtn.onclick = () => {
     return;
   }
 
-  // Same-mode restore (safe)
-  if (c.mode === "pillows") {
-    restorePillowsFromCreation(c);
-  } else if (c.mode === "sofa") {
-    restoreSofaFromCreation(c);
-  }
-
+  // Same-mode restore (this page = sofa)
+  restoreSofaFromCreation(c);
   creationPreviewModal.style.display = "none";
+
 };
 
 
@@ -1474,37 +1472,38 @@ async function restoreSofaFromCreation(c) {
   loadImage(sofaThumb, baseFile);   // stage 1 preview
   loadImage(baseImg2, baseFile);    // stage 2 preview
 
-  // 3) Rebuild fabrics array from server list
+  // 3) Rebuild fabrics array from server list (UI-consistent IDs)
   fabrics = [];
-  for (const f of c.fabrics) {
-    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
+  for (let i = 0; i < c.fabrics.length; i++) {
+    const f = c.fabrics[i];
+    const file = await fetchUrlAsFile(f.image_path, `fabric_${i + 1}.jpg`);
+
     fabrics.push({
-      id: f.role,                 // matches fabric_01 / fabric_02 / ...
+      id: i,                      // ✅ numeric ID (0,1,2)
       url: URL.createObjectURL(file),
       file,
-      parts: new Set()            // will fill below
+      parts: new Set()
     });
   }
 
-  // 4) Restore part assignment using meta (server already returns parsed meta)
+
+  // 4) Restore part assignment using meta (index-based)
   assigned = { back: null, seat: null, arms: null };
 
-  // If you stored sofa fabric-part mapping inside meta.fabrics[*].parts, restore it:
   if (c.meta && Array.isArray(c.meta.fabrics)) {
-    for (const mf of c.meta.fabrics) {
-      const fab = fabrics.find(x => x.id === mf.id);
-      if (!fab) continue;
+    for (let i = 0; i < c.meta.fabrics.length; i++) {
+      const mf = c.meta.fabrics[i];
+      const fab = fabrics[i]; // index-aligned
 
-      if (Array.isArray(mf.parts)) {
-        mf.parts.forEach(p => fab.parts.add(p));
-      }
+      if (!fab || !Array.isArray(mf.parts)) continue;
 
-      // Keep assigned[] consistent with parts
-      for (const p of ["back", "seat", "arms"]) {
-        if (fab.parts.has(p)) assigned[p] = fab.id;
-      }
+      mf.parts.forEach(p => {
+        fab.parts.add(p);
+        assigned[p] = fab.id;
+      });
     }
   }
+
 
   // 5) Reset current fabric index and sync UI
   idx = 0;

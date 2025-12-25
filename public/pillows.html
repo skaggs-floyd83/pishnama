@@ -326,23 +326,25 @@ function updateLoginButton() {
 
 function forceLogoutIfInvalid(tokenResponse, authOptions = {}) {
     if (tokenResponse && tokenResponse.error === "login_required") {
-        // Remove invalid credentials
+        // Clear credentials
         localStorage.removeItem("pishnama_user_token");
         localStorage.removeItem("pishnama_user_identifier");
 
-        // Update UI
-        updateLoginButton();
-
-        // Inform the user
-        // Show toast only if NOT silent
-        if (!authOptions.silent) {
-          showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        // If this is an automatic logout (page load / background fetch),
+        // do a hard refresh to guarantee a clean UI state.
+        if (authOptions.silent) {
+            window.location.reload();
+            return true;
         }
 
-        return true;  // indicates logout happened
+        // User-visible logout (no refresh)
+        updateLoginButton();
+        showToast("نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.");
+        return true;
     }
     return false;
 }
+
 
 async function fetchWithAuth(url, options = {}) {
   const token = localStorage.getItem("pishnama_user_token");
@@ -404,11 +406,11 @@ const prevStep     = document.getElementById('prevStep');
 /* ================================== State ================================= */
 
 // Global UI state (no persistence)
-let sofaChosen   = false; // becomes true after an image is picked
+let pillowsChosen   = false; // becomes true after an image is picked
 /** @type {Fabric[]} */
 let fabrics      = [];    // each item: { id, url, file?:File }
 let idx          = 0;     // index of "current" fabric being edited
-let sofaBaseFile = null;  // keep original base sofa File for export
+let pillowsBaseFile = null;  // keep original base sofa File for export
 
 // NEW: Global quality setting (standard | high)
 let generationQuality = "high";
@@ -673,7 +675,7 @@ function validateBeforeGenerateSofa(){
   const warnings = [];
 
   // Base image is required
-  if(!sofaChosen){
+  if(!pillowsChosen){
     errors.push("\n- تصویر پایهٔ مبل و بالشتک ها انتخاب نشده است.");
   }
 
@@ -759,7 +761,7 @@ function buildSofaMetaAndFiles(){
     fabrics: included.map(x=>({id:x.id})),
     excluded,
     files: {
-      base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
+      base_image: pillowsBaseFile ? 'base_image'+ext(pillowsBaseFile.name) : null,
       fabrics: included.map(x=> x.id + ext(x.file.name))
     }
   };
@@ -783,7 +785,7 @@ function buildSofaMetaAndFiles(){
   excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
   lines.push('');
   lines.push('=== FILES IN THIS EXPORT ===');
-  if(sofaBaseFile) lines.push(meta.files.base_image);
+  if(pillowsBaseFile) lines.push(meta.files.base_image);
   included.forEach(x=> lines.push(x.id+ext(x.file.name)));
 
   return {meta, included, metaTxt: lines.join('\n'), quality};
@@ -839,8 +841,8 @@ async function handleSofaFileChange(e){
     maxSide: BASE_MAX_SIDE
   });
 
-  sofaChosen   = true;
-  sofaBaseFile = file;
+  pillowsChosen   = true;
+  pillowsBaseFile = file;
 
   toFabricsBtn.disabled = false;
   sofaThumb.innerHTML = '<img>';
@@ -861,7 +863,7 @@ function handleSofaCamChange(){
   sofaFile.dispatchEvent(new Event('change'));
 }
 function handleToFabricsClick(){
-  if(!sofaChosen) return;
+  if(!pillowsChosen) return;
   gotoFabrics();
 }
 
@@ -989,7 +991,7 @@ async function handlePreviewClick(){
 
   try {
     enterLoadingState();
-    const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
+    const imageBase64 = await sendToBackend(meta, included, pillowsBaseFile);
     if (!imageBase64) return;
     baseImg2.src = "data:image/png;base64," + imageBase64;
     refreshCredits();
@@ -1393,14 +1395,13 @@ reuseCreationBtn.onclick = () => {
     return;
   }
 
-  // Same-mode restore (safe)
-  if (c.mode === "pillows") {
-    restorePillowsFromCreation(c);
-  } else if (c.mode === "sofa") {
-    restoreSofaFromCreation(c);
-  }
-
+  
+  // Same-mode restore (this page = pillows)
+  // - If c.mode is missing (old history rows), assume it's for THIS page.
+  // - If it belongs to another mode, redirect (already handled above).
+  restorePillowsFromCreation(c);
   creationPreviewModal.style.display = "none";
+
 };
 
 
@@ -1416,9 +1417,8 @@ async function restorePillowsFromCreation(c) {
   fabrics = [];
   idx = 0;
   modeSelection = "single";
-  sofaChosen = false;
-  sofaBaseFile = null;
-
+  pillowsChosen = false;
+  pillowsBaseFile = null;
 
 
   if (!c.base_image_path) {
@@ -1431,8 +1431,8 @@ async function restorePillowsFromCreation(c) {
 
   // 2) Restore base image preview + file
   const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
-  sofaBaseFile = baseFile;         // use your pillows base-file variable name
-  sofaChosen = true;               // your pillows chosen flag
+  pillowsBaseFile = baseFile;         // use your pillows base-file variable name
+  pillowsChosen = true;               // your pillows chosen flag
   loadImage(sofaThumb, baseFile);
   loadImage(baseImg2, baseFile);
 
@@ -1445,14 +1445,17 @@ async function restorePillowsFromCreation(c) {
 
   // 4) Restore fabrics
   fabrics = [];
-  for (const f of c.fabrics) {
-    const file = await fetchUrlAsFile(f.image_path, `${f.role}.jpg`);
+  for (let i = 0; i < c.fabrics.length; i++) {
+    const f = c.fabrics[i];
+    const file = await fetchUrlAsFile(f.image_path, `fabric_${i + 1}.jpg`);
+
     fabrics.push({
-      id: f.role,
+      id: i,                              // ✅ numeric, UI-consistent
       url: URL.createObjectURL(file),
       file
     });
   }
+
 
   idx = 0;
   updateUI();
