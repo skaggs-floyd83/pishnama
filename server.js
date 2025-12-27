@@ -38,8 +38,119 @@ import nodemailer from "nodemailer";
 import { runMigrations, db } from "./db.js";
 
 
+import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+
+
 
 dotenv.config();
+
+// ====================== S3-COMPATIBLE STORAGE (NEW) ===========================
+// Works with AWS S3 and S3-compatible providers (MinIO, Wasabi, Backblaze B2 S3, etc.)
+const S3_BUCKET = process.env.S3_BUCKET;
+const S3_REGION = process.env.S3_REGION || "us-east-1";
+const S3_ENDPOINT = process.env.S3_ENDPOINT; // optional for non-AWS providers
+const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID;
+const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY;
+const S3_FORCE_PATH_STYLE = (process.env.S3_FORCE_PATH_STYLE || "false") === "true";
+
+if (!S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
+  console.warn("WARNING: S3 storage env vars missing. Cloud storage will not work until configured.");
+}
+
+const s3 = new S3Client({
+  region: S3_REGION,
+  endpoint: S3_ENDPOINT || undefined,
+  forcePathStyle: S3_FORCE_PATH_STYLE,
+  credentials: {
+    accessKeyId: S3_ACCESS_KEY_ID || "",
+    secretAccessKey: S3_SECRET_ACCESS_KEY || ""
+  }
+});
+
+function sha256Hex(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function guessExtFromMime(mime) {
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  return "jpg"; // default
+}
+
+// Insert-or-reuse an image row (dedup) + ensure object exists in bucket
+async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) {
+
+  const hash = sha256Hex(buffer);
+  const byteSize = buffer.length;
+  const ext = guessExtFromMime(mimeType);
+
+  const ownerUserId = scope === "user" ? userId : null;
+
+  const existing = db.prepare(`
+    SELECT id, storage_key
+    FROM images
+    WHERE scope = ?
+      AND owner_user_id IS ?
+      AND sha256 = ?
+  `).get(scope, ownerUserId, hash);
+
+  if (existing) {
+    return { imageId: existing.id, storageKey: existing.storage_key, reused: true };
+  }
+
+  // Stable key => perfect for dedup and CDN caching later
+  const storageKey =
+    scope === "user"
+      ? `u/${userId}/${hash}.${ext}`
+      : `g/${hash}.${ext}`;  
+  
+
+  try {
+    // Upload object
+    await s3.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: mimeType,
+      ACL: "private"
+    }));
+
+    const info = db.prepare(`
+      INSERT INTO images (scope, owner_user_id, sha256, byte_size, mime_type, storage_key)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(scope, ownerUserId, hash, byteSize, mimeType, storageKey);
+
+    return { imageId: info.lastInsertRowid, storageKey, reused: false };
+
+  } catch (err) {
+    console.error("Image upsert failed:", {
+      userId,
+      storageKey,
+      err: err.message
+    });
+    throw err;
+  }
+  
+}
+
+async function presignGetUrl(storageKey, expiresSeconds = 60) {
+  const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: storageKey });
+  return await getSignedUrl(s3, cmd, { expiresIn: expiresSeconds });
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ================= EMAIL TRANSPORTER (Nodemailer) =================
 const emailTransporter = nodemailer.createTransport({
@@ -59,16 +170,7 @@ const smsFromNumber = process.env.SMS_FROM_NUMBER || "+983000505";
 // ===== NEW: Added for serving HTML files =====
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// =============================================
 
-// ====================== LOCAL STORAGE PATHS ===========================
-const OUTPUT_DIR = path.join(__dirname, "public", "creations");
-
-import fs from "fs";
-
-if (!fs.existsSync(OUTPUT_DIR)) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-}
 
 // ====================== HISTORY CONFIG ===========================
 const HISTORY_PAGE_SIZE_DEFAULT = 12;
@@ -85,7 +187,7 @@ const loginCodes = {};     // { emailOrPhone : "1234" }
 const userTokens = {};     // { token : emailOrPhone }
 
 
-// ===== NEW: Added static file serving =====
+// ===== static file serving  =====
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
@@ -422,22 +524,90 @@ app.post("/api/verify-code", express.json(), (req, res) => {
   const token = crypto.randomBytes(24).toString("hex");
   userTokens[token] = row.id;
 
+
+  // Set a cookie so <img src="/media/..."> is authenticated
+  res.setHeader(
+    "Set-Cookie",
+    `pishnama_token=${encodeURIComponent(token)}; Path=/; SameSite=Lax; HttpOnly`
+  );
   // 4) Return token to frontend
   return res.json({ token });
+
+
 
 });
 
 
 // ===============================================
 // Attach userId to req if token is valid
+// Supports:
+//   - Header: x-user-token (current frontend fetchWithAuth)
+//   - Cookie: pishnama_token (for <img src> and normal browser navigation)
+//   - Query:  ?t=...         (fallback if cookie missing)
 // ===============================================
+function readCookie(req, name) {
+  const raw = req.headers.cookie || "";
+  const parts = raw.split(";").map(s => s.trim());
+  for (const p of parts) {
+    if (p.startsWith(name + "=")) return decodeURIComponent(p.slice(name.length + 1));
+  }
+  return null;
+}
+
 app.use((req, res, next) => {
-  const token = req.headers["x-user-token"];
+  const headerToken = req.headers["x-user-token"];
+  const cookieToken = readCookie(req, "pishnama_token");
+  const queryToken = req.query?.t;
+
+  const token = headerToken || cookieToken || queryToken;
+
   if (token && userTokens[token]) {
     req.userId = userTokens[token];
+    req.userToken = token; // keep original token string for generating media URLs
   }
   next();
 });
+
+
+// ===============================================
+// GET /media/:imageId
+// Authenticated media access:
+// - Verifies ownership (or global scope)
+// - Redirects to short-lived presigned URL
+// ===============================================
+app.get("/media/:imageId", async (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const imageId = Number(req.params.imageId);
+  if (!imageId) return res.status(400).json({ error: "invalid_image_id" });
+
+  const img = db.prepare(`
+    SELECT id, scope, owner_user_id, storage_key
+    FROM images
+    WHERE id = ?
+  `).get(imageId);
+
+  if (!img) return res.status(404).json({ error: "not_found" });
+
+  // Access rule:
+  // - scope='user' => only owner can access
+  // - scope='global' => any logged-in user can access (future shared catalogs)
+  if (img.scope === "user" && img.owner_user_id !== req.userId) {
+    // Do NOT leak existence
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  try {
+    const url = await presignGetUrl(img.storage_key, 60);
+    return res.redirect(302, url);
+  } catch (e) {
+    return res.status(500).json({ error: "media_unavailable" });
+  }
+});
+
+
 
 
 // ====================== IMAGE NORMALIZATION / COMPRESSION ===================
@@ -551,22 +721,35 @@ app.get("/api/history", (req, res) => {
       id,
       mode,
       mode_selection,
-      quality,
-      output_image_path,
+      quality,      
       cost_credits,
-      created_at
+      created_at,
+      output_image_id
     FROM creations
     WHERE user_id = ?
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
   `).all(req.userId, pageSize, offset);
 
+
   return res.json({
     page,
     pageSize,
     total: totalRow.cnt,
-    items: rows
+    items: rows.map(r => ({
+      id: r.id,
+      mode: r.mode,
+      mode_selection: r.mode_selection,
+      quality: r.quality,
+      cost_credits: r.cost_credits,
+      created_at: r.created_at,
+      output_image_url: `/media/${r.output_image_id}`
+    }))
   });
+
+
+
+
 });
 
 
@@ -592,11 +775,11 @@ app.get("/api/creation/:id", (req, res) => {
       mode,
       mode_selection,
       quality,
-      base_image_path,
-      output_image_path,
       cost_credits,
       created_at,
-      meta_json
+      meta_json,
+      base_image_id,
+      output_image_id
     FROM creations
     WHERE id = ? AND user_id = ?
   `).get(creationId, req.userId);
@@ -609,7 +792,6 @@ app.get("/api/creation/:id", (req, res) => {
   const fabricRows = db.prepare(`
     SELECT
       f.id AS fabric_id,
-      f.file_path AS file_path,
       cf.ord AS ord,
       cf.part AS part
     FROM creation_fabrics cf
@@ -628,7 +810,6 @@ app.get("/api/creation/:id", (req, res) => {
     if (!grouped.has(key)) {
       grouped.set(key, {
         id: r.fabric_id,
-        image_path: r.file_path, // frontend expects image_path
         role: `fabric_${String(r.ord).padStart(2, "0")}`,
         meta: { parts: [] }
       });
@@ -643,19 +824,28 @@ app.get("/api/creation/:id", (req, res) => {
 
 
 
-  // ---- normalize response ----
+  // ---- response ----
   return res.json({
     id: creation.id,
     mode: creation.mode,
     mode_selection: creation.mode_selection,
     quality: creation.quality,
-    base_image_path: creation.base_image_path,
-    output_image_path: creation.output_image_path,
     cost_credits: creation.cost_credits,
     created_at: creation.created_at,
     meta: JSON.parse(creation.meta_json || "{}"),
+
+    // IMPORTANT: return image IDs + server-resolvable URLs
+    base_image_id: creation.base_image_id,
+    output_image_id: creation.output_image_id,
+    base_image_url: `/media/${creation.base_image_id}`,
+    output_image_url: `/media/${creation.output_image_id}`,
+
     fabrics
   });
+
+
+
+
 });
 
 
@@ -910,76 +1100,82 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       });
     }
 
-    // ====================== SAVE OUTPUT IMAGE ===========================
-
-    // Create user-specific folder
-    const userDir = path.join(OUTPUT_DIR, String(req.userId));
-    if (!fs.existsSync(userDir)) {
-      fs.mkdirSync(userDir, { recursive: true });
-    }
-
-    // Generate filename
-    const filename = `creation_${Date.now()}.png`;
-    const outputPath = path.join(userDir, filename);
-
-    // Decode base64 and write file
+    // ====================== STORE OUTPUT IMAGE (CLOUD + DEDUP) ===================
+    // Output image buffer from OpenAI
     const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
-    fs.writeFileSync(outputPath, imageBuffer);
 
-    // Store relative path for DB
-    const outputImagePath = `/creations/${req.userId}/${filename}`;
+    // Store output image in cloud (dedup)
+    const outputUpsert = await upsertImageForUser({
+      userId: req.userId,
+      buffer: imageBuffer,
+      mimeType: "image/png", // OpenAI output is png in your current code path
+      scope: "user"
+    });
 
-    // ====================== SAVE BASE IMAGE ===========================
+    
 
-    // Find the uploaded base image
+  
+
+
+    // ====================== STORE BASE IMAGE (CLOUD + DEDUP) ===================
     const baseFile = processedFiles.find(f => f.fieldname === "base_image");
-    let baseImagePath = null;
+    let baseImageId = null;
+  
 
     if (baseFile) {
-      const baseFilename = `base_${Date.now()}.jpg`;
-      const basePath = path.join(userDir, baseFilename);
+      const baseUpsert = await upsertImageForUser({
+        userId: req.userId,
+        buffer: baseFile.buffer,
+        mimeType: baseFile.mimetype || "image/jpeg",
+        scope: "user"
+      });
 
-      fs.writeFileSync(basePath, baseFile.buffer);
+      baseImageId = baseUpsert.imageId;
 
-      // Store relative path for DB (served by your /creations static route)
-      baseImagePath = `/creations/${req.userId}/${baseFilename}`;
     }
+
 
 
     
     // ====================== SAVE CREATION RECORD ===========================
 
-    const insert = db.prepare(`
+    const insert = db.prepare(`      
       INSERT INTO creations (
         user_id,
         mode,
         mode_selection,
         quality,
-        base_image_path,
-        output_image_path,
+        base_image_id,
+        output_image_id,
         meta_json,
         cost_credits
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const outputImageId = outputUpsert.imageId;
+
     const result = insert.run(
       req.userId,
       meta.mode,
       meta.mode_selection,
       meta.quality,
-      baseImagePath,
-      outputImagePath,
+      baseImageId,
+      outputImageId,      
       JSON.stringify(meta),
       cost
     );
+
+
+
+
 
     const creationId = result.lastInsertRowid;
 
     const insertFabric = db.prepare(`
       INSERT INTO fabrics (
         user_id,
-        file_path,
+        image_id,        
         created_at
       )
       VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1000,19 +1196,23 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     for (const f of processedFiles) {
       if (f.fieldname === "base_image") continue;
 
-      // ---- save fabric image file ----
-      const fabricFilename = `fabric_${Date.now()}_${fabricIndex}.jpg`;
-      const fabricPath = path.join(userDir, fabricFilename);
+      // Store fabric in cloud (dedup)
+      const fabricUpsert = await upsertImageForUser({
+        userId: req.userId,
+        buffer: f.buffer,
+        mimeType: f.mimetype || "image/jpeg",
+        scope: "user"
+      });
 
-      fs.writeFileSync(fabricPath, f.buffer);
+      const fabricImageId = fabricUpsert.imageId;
 
-      const fabricImagePath = `/creations/${req.userId}/${fabricFilename}`;
 
-      // ---- insert fabric row ----
       const fabricResult = insertFabric.run(
         req.userId,
-        fabricImagePath
+        fabricImageId
       );
+
+
 
       const fabricId = fabricResult.lastInsertRowid;
 
@@ -1064,8 +1264,15 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // ------------------------------------------------------------------
     // Return the base64 image + updated credits
     // ------------------------------------------------------------------
-    res.json({
-      image_base64: data.data[0].b64_json,
+     res.json({
+      // IMPORTANT: return IDs + URLs (not base64)
+      creation_id: creationId,
+      base_image_id: baseImageId,
+      output_image_id: outputImageId,
+
+      base_image_url: baseImagePath,
+      output_image_url: outputImagePath,
+
       credits_remaining: updatedCredits.credits,
       credits_expires_at: updatedCredits.credits_expires_at
     });

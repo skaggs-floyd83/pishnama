@@ -488,7 +488,7 @@ async function loadHistory(reset = false) {
     div.style.fontSize = "12px";
 
     div.innerHTML = `
-      <img src="${item.output_image_path}"
+      <img src="${item.output_image_url}"
            data-creation-id="${item.id}"
            class="history-thumb"
            style="width:100%; border-radius:6px; display:block; cursor:pointer;">
@@ -1363,7 +1363,8 @@ async function openCreationPreview(creationId) {
 
   lastPreviewedCreation = data;
 
-  creationPreviewImage.src = data.output_image_path;
+  creationPreviewImage.src = data.output_image_url;
+
 
   creationPreviewMeta.textContent =
     `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +
@@ -1372,7 +1373,7 @@ async function openCreationPreview(creationId) {
   creationPreviewFabrics.innerHTML = "";
   for (const f of data.fabrics) {
     const img = document.createElement("img");
-    img.src = f.image_path;
+    img.src = f.image_url;
     img.style.width = "80px";
     img.style.borderRadius = "6px";
     img.title = f.role;
@@ -1457,7 +1458,7 @@ async function restoreSofaFromCreation(c) {
   sofaBaseFile = null;
 
   // Must have base image
-  if (!c.base_image_path) {
+  if (!c.base_image_url) {
     alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
     return;
   }
@@ -1466,7 +1467,8 @@ async function restoreSofaFromCreation(c) {
   gotoFabrics();
 
   // 2) Restore base image preview + file
-  const baseFile = await fetchUrlAsFile(c.base_image_path, "base.jpg");
+  const baseFile = await fetchUrlAsFile(c.base_image_url, "base.jpg");
+
   sofaBaseFile = baseFile;          // your existing variable in sofa workflow
   sofaChosen = true;                // your existing state
   loadImage(sofaThumb, baseFile);   // stage 1 preview
@@ -1476,7 +1478,7 @@ async function restoreSofaFromCreation(c) {
   fabrics = [];
   for (let i = 0; i < c.fabrics.length; i++) {
     const f = c.fabrics[i];
-    const file = await fetchUrlAsFile(f.image_path, `fabric_${i + 1}.jpg`);
+    const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
 
     fabrics.push({
       id: i,                      // ✅ numeric ID (0,1,2)

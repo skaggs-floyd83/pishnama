@@ -34,19 +34,68 @@ export function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_users_identifier
       ON users(identifier);
 
+
+
+
+
+    -- ============ IMAGES
+    CREATE TABLE IF NOT EXISTS images (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+
+      -- Ownership model:
+      -- scope = 'user'  => owner_user_id is required
+      -- scope = 'global' => owner_user_id is NULL (future: shared catalogs)
+      scope         TEXT NOT NULL DEFAULT 'user',
+      owner_user_id INTEGER,
+
+      sha256        TEXT NOT NULL,        -- dedup key
+      byte_size     INTEGER NOT NULL,
+      mime_type     TEXT NOT NULL,        -- e.g. image/jpeg, image/png
+
+      storage_key   TEXT NOT NULL,        -- object key in S3-compatible storage
+      etag          TEXT,                 -- provider ETag if available
+
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    -- Dedup indexes:
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_images_user_hash
+      ON images(scope, owner_user_id, sha256);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_images_global_hash
+      ON images(scope, sha256)
+      WHERE scope = 'global';
+
+    CREATE INDEX IF NOT EXISTS idx_images_owner
+      ON images(owner_user_id, created_at DESC);
+
+
+
+
+
+
+
     -- ============ FABRICS (reusable user fabrics) ============
 
     CREATE TABLE IF NOT EXISTS fabrics (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      image_id INTEGER,
       user_id     INTEGER NOT NULL,
-      file_path   TEXT NOT NULL,              -- relative path or full CDN URL
-      file_hash   TEXT,                       -- optional: for deduplication
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_fabrics_user
       ON fabrics(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_fabrics_image
+      ON fabrics(image_id);
+
+
+
 
     -- ============ CREATIONS (history of generations) ============
 
@@ -56,16 +105,23 @@ export function runMigrations() {
       mode               TEXT NOT NULL,       -- 'sofa', 'pillows', 'carpet', 'drapery', ...
       mode_selection     TEXT,                -- 'all', 'partial', 'single', 'random', etc.
       quality            TEXT,                -- 'high' | 'standard'
-      base_image_path    TEXT,                -- stored original image file
-      output_image_path  TEXT,                -- generated result file
+      base_image_id INTEGER,
+      output_image_id INTEGER,
       meta_json          TEXT,                -- raw meta sent from frontend (for debugging)
       cost_credits       INTEGER NOT NULL,    -- credits spent for this creation
       created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (base_image_id) REFERENCES images(id) ON DELETE SET NULL,
+      FOREIGN KEY (output_image_id) REFERENCES images(id) ON DELETE SET NULL
+
     );
 
     CREATE INDEX IF NOT EXISTS idx_creations_user_created
       ON creations(user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_creations_output_image
+      ON creations(output_image_id);
+      
 
     -- ============ CREATION_FABRICS (bridge: which fabrics used in a creation) ============
 
