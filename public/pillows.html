@@ -109,6 +109,18 @@
   #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
   #toast.show{opacity:1}
 
+  .overlay{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    width:16px;
+    height:16px;
+    border-radius:4px;
+    border:1px solid var(--accent);
+    background-size:cover;
+    background-position:center;
+  }
+
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
@@ -185,8 +197,17 @@
 
       <div class="card" id="frame">
         <!-- Stage 2 base sofa frame mirrors pillows layout -->
-        <div class="thumb" id="baseFrame" style="margin-bottom: 15px;">
+        <div class="thumb" id="baseFrame" style="margin-bottom: 15px;">          
           <img id="baseImg2" alt="">
+        </div>
+        <!-- Tagging controls (ONLY for tagged mode) -->
+        <div class="row" id="tagControls" style="display:none; justify-content:flex-start; gap:8px; margin-bottom:8px;">
+          <button class="btn" id="undoBtn" title="واگرد">↩</button>
+          <button class="btn" id="clearBtn" title="پاک‌سازی">🗑️</button>
+        </div>
+
+        <div class="thumb" id="tagFrame" style="display:none; position:relative; margin-bottom:15px;">
+          <img id="tagBaseImg" alt="">
         </div>
 
         <!-- Fabric selection frame with thumbnail + controls -->
@@ -400,6 +421,13 @@ const previewBtn   = document.getElementById('previewBtn');
 const addBtn       = document.getElementById('addBtn');
 const nextBtn      = document.getElementById('nextBtn');
 const prevStep     = document.getElementById('prevStep');
+
+const tagFrame = document.getElementById('tagFrame');
+const tagControls = document.getElementById('tagControls');
+const tagBaseImg = document.getElementById('tagBaseImg');
+const undoBtn = document.getElementById('undoBtn');
+const clearBtn = document.getElementById('clearBtn');
+
 
 
 
@@ -645,6 +673,19 @@ function updateUI(){
       }
     });
   }
+  
+  
+  // 
+  if (modeSelection === "tagged" && idx === 0) {
+    if (tagFrame) tagFrame.style.display = "block";
+    if (tagControls) tagControls.style.display = "flex";
+    if (tagBaseImg && baseImg2) tagBaseImg.src = baseImg2.src;
+  } else {
+    if (tagFrame) tagFrame.style.display = "none";
+    if (tagControls) tagControls.style.display = "none";
+  }
+
+
 
   // 3) Generate is always enabled; validation happens on click now
   previewBtn.disabled = false;
@@ -662,7 +703,8 @@ function updateUI(){
       const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
       addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
 
-      const currentReady = !!cur.url; // only need an image, no parts
+      // a fabric and at least one tag is needed
+      const currentReady = !!cur.url && Array.isArray(cur.tags) && cur.tags.length > 0;
       addBtn.disabled = !currentReady;
     }
   }
@@ -671,6 +713,56 @@ function updateUI(){
   nextBtn.style.display='inline-block';
   nextBtn.disabled = !(idx < fabrics.length-1);
 }
+
+
+// tagging interaction
+function handleTagFrameClick(e){
+  if (modeSelection !== "tagged") return;
+  if (!fabrics[idx] || !fabrics[idx].url) return;
+
+  const frame = document.getElementById("tagFrame");
+  const rect = frame.getBoundingClientRect();
+
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+
+  const tag = { id: Date.now(), x, y };
+  fabrics[idx].tags.push(tag);
+
+  renderTags();
+} 
+function renderTags(){
+  const frame = document.getElementById("tagFrame");
+  if (!frame) return;
+
+  frame.querySelectorAll(".overlay").forEach(n => n.remove());
+
+  fabrics.forEach((f, fi) => {
+    if (!f.tags || !f.url) return;
+    f.tags.forEach(t => {
+      const d = document.createElement("div");
+      d.className = "overlay";
+      d.style.left = (t.x * 100) + "%";
+      d.style.top  = (t.y * 100) + "%";
+      d.style.backgroundImage = `url(${f.url})`;
+      frame.appendChild(d);
+    });
+  });
+}
+
+// handlers
+function handleUndoTag(){
+  if (!fabrics[idx] || fabrics[idx].tags.length === 0) return;
+  fabrics[idx].tags.pop();
+  renderTags();
+}
+function handleClearTags(){
+  if (!fabrics[idx]) return;
+  fabrics[idx].tags = [];
+  renderTags();
+}
+
+
 
 /* ===================== Validation (pre-generation) ======================== */
 
@@ -1122,6 +1214,12 @@ schem  .addEventListener('click', handleSchemClick);
 
 // Generate (Preview)
 previewBtn.addEventListener('click', handlePreviewClick);
+
+//tagging related
+document.getElementById("tagFrame")?.addEventListener("click", handleTagFrameClick);
+document.getElementById("undoBtn")?.addEventListener("click", handleUndoTag);
+document.getElementById("clearBtn")?.addEventListener("click", handleClearTags);
+
 
 // Remove fabric (IIFE in original → direct binding here)
 (function bindRemoveFabric(){
