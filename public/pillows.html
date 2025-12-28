@@ -122,7 +122,6 @@
 
 
 </style>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -750,6 +749,55 @@ function renderTags(){
   });
 }
 
+async function makeAnnotatedBaseImageBlob() {
+  if (!baseImg2 || !pillowsBaseFile) return null;
+
+  const img = await loadFileToImage(pillowsBaseFile);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const frameRect = tagFrame.getBoundingClientRect();
+  const sx = canvas.width / frameRect.width;
+  const sy = canvas.height / frameRect.height;
+
+  // draw each tag as a fabric-textured square
+  fabrics.forEach((f, fi) => {
+    if (!f.tags || !f.url) return;
+
+    f.tags.forEach(t => {
+      const cx = t.x * frameRect.width * sx;
+      const cy = t.y * frameRect.height * sy;
+
+      const size = 16 * ((sx + sy) / 2);
+      const half = size / 2;
+
+      const patImg = new Image();
+      patImg.src = f.url;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx - half, cy - half, size, size);
+      ctx.clip();
+      ctx.drawImage(patImg, cx - half, cy - half, size, size);
+      ctx.restore();
+
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = Math.max(2, size * 0.12);
+      ctx.strokeRect(cx - half, cy - half, size, size);
+    });
+  });
+
+  return await new Promise(res =>
+    canvas.toBlob(res, "image/png", 0.92)
+  );
+}
+
+
 // handlers
 function handleUndoTag(){
   if (!fabrics[idx] || fabrics[idx].tags.length === 0) return;
@@ -789,99 +837,19 @@ function validateBeforeGenerateSofa(){
     warnings.push("\n- در حالت «همهٔ بالشتک ها با یک پارچه» فقط پارچهٔ اول استفاده می‌شود؛ بقیه نادیده گرفته خواهند شد.");
   }
   
-  // tagged mode validation will be added in later rounds
+  if (modeSelection === "tagged") {
+    const valid = fabrics.some(f => f.file && f.tags && f.tags.length > 0);
+    if (!valid) {
+      errors.push("\n- باید حداقل یک پارچه و حداقل یک بالشتک انتخاب‌ شده باشد.");
+    }
+  }
+
 
 
 
   return {errors, warnings};
 }
 
-/* ========================== Export / ZIP Helpers ========================== */
-
-function tsNow(){
-  const p = new Date();
-  const z = n=>String(n).padStart(2,'0');
-  return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
-}
-function ext(name){
-  const i = name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png';
-}
-function downloadBlob(blob, filename){
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=filename;
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
-}
-
-/** Build meta/files overview WITHOUT side effects (pure builder) */
-function buildSofaMetaAndFiles(){
-  // use global quality (no longer read from DOM)
-  const quality = generationQuality;
-
-  const included = [];
-  const excluded = [];
-  // Determine which fabrics should be included based on mode
-  let fabricListToInclude = [];
-
-  if (modeSelection === "single") {
-    // Only the first fabric (index 0)
-    fabricListToInclude = fabrics.slice(0, 1);
-  } else {
-    // Random mode → include all fabrics with images
-    fabricListToInclude = fabrics;
-  }
-
-  // Build include/exclude lists
-  fabricListToInclude.forEach((f, fi) => {
-    const id = `fabric_${String(fi+1).padStart(2,'0')}`;
-    const hasFile = !!f.file;
-    if (hasFile) {
-      included.push({ id, file: f.file });
-    } else {
-      excluded.push({ id, reason: 'no image' });
-    }
-  });
-
-
-  const selMode = modeSelection || 'single';
-
-  const meta = {
-    mode: 'pillows',
-    mode_selection: selMode,
-    quality,
-    fabrics: included.map(x=>({id:x.id})),
-    excluded,
-    files: {
-      base_image: pillowsBaseFile ? 'base_image'+ext(pillowsBaseFile.name) : null,
-      fabrics: included.map(x=> x.id + ext(x.file.name))
-    }
-  };
-
-  const lines = [];
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
-  lines.push('=== HEADER ===');
-  lines.push('mode: pillows');
-  lines.push(`mode_selection: ${selMode}`);
-  lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
-  lines.push(`quality: ${quality}`);
-  lines.push('');
-  lines.push('=== INCLUDED FABRICS ===');
-  if(included.length===0){ lines.push('(none)'); }
-  included.forEach(x=>{
-    lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
-  });
-  lines.push('');
-  lines.push('=== EXCLUSIONS (NOT SENT) ===');
-  if(excluded.length===0){ lines.push('(none)'); }
-  excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
-  lines.push('');
-  lines.push('=== FILES IN THIS EXPORT ===');
-  if(pillowsBaseFile) lines.push(meta.files.base_image);
-  included.forEach(x=> lines.push(x.id+ext(x.file.name)));
-
-  return {meta, included, metaTxt: lines.join('\n'), quality};
-}
 
 /* ========================== Toast (UI affordance) ========================= */
 
@@ -1077,29 +1045,81 @@ async function handlePreviewClick(){
   }
 
 
-  // No automatic mode switching for tagged mode (handled in later rounds)
+  ////
+  let meta;
+  let included = [];
 
+  if (modeSelection === "single") {
+    // EXISTING BEHAVIOR — unchanged
+    meta = {
+      mode: "pillows",
+      mode_selection: "single",
+      quality: generationQuality,
+      fabrics: [{ id: "fabric_01" }]
+    };
 
+    included = fabrics
+      .filter(f => !!f.file)
+      .slice(0, 1)
+      .map((f, i) => ({
+        id: `fabric_${String(i + 1).padStart(2, "0")}`,
+        file: f.file
+      }));
 
-  const {meta, included} = buildSofaMetaAndFiles();
-
-  try {
-    enterLoadingState();
-    const imageBase64 = await sendToBackend(meta, included, pillowsBaseFile);
-    if (!imageBase64) return;
-    baseImg2.src = "data:image/png;base64," + imageBase64;
-    refreshCredits();
-  } catch (err) {
-    console.error(err);
-    // Do NOT show "خطا..." if the user was logged out automatically
-    if (err.message === "Unauthorized") {
-        // Already handled by forceLogoutIfInvalid()
-        return;
+    try {
+      enterLoadingState();
+      const imageBase64 = await sendToBackend(meta, included, pillowsBaseFile);
+      if (!imageBase64) return;
+      baseImg2.src = "data:image/png;base64," + imageBase64;
+      refreshCredits();
+    } finally {
+      exitLoadingState();
     }
-    showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
-  } finally {
-    exitLoadingState();
+
+  } else if (modeSelection === "tagged") {
+    // NEW BEHAVIOR — annotated base image only
+    const annotatedBlob = await makeAnnotatedBaseImageBlob();
+    if (!annotatedBlob) {
+      alert("خطا در تولید تصویر نشانه‌گذاری‌شده.");
+      return;
+    }
+
+    meta = {
+      mode: "pillows",
+      mode_selection: "tagged",
+      quality: generationQuality,
+      fabrics: fabrics
+        .filter(f => f.file && f.tags && f.tags.length > 0)
+        .map((f, i) => ({
+          id: `fabric_${String(i + 1).padStart(2, "0")}`,
+          tag_count: f.tags.length
+        }))
+    };
+
+    included = fabrics
+      .filter(f => f.file && f.tags && f.tags.length > 0)
+      .map((f, i) => ({
+        id: `fabric_${String(i + 1).padStart(2, "0")}`,
+        file: f.file
+      }));
+
+    const annotatedFile = new File(
+      [annotatedBlob],
+      "base_image_annotated.png",
+      { type: "image/png" }
+    );
+
+    try {
+      enterLoadingState();
+      const imageBase64 = await sendToBackend(meta, included, annotatedFile);
+      if (!imageBase64) return;
+      baseImg2.src = "data:image/png;base64," + imageBase64;
+      refreshCredits();
+    } finally {
+      exitLoadingState();
+    }
   }
+  ////
 
 
   
