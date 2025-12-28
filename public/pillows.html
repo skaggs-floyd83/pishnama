@@ -209,8 +209,8 @@
           <div>
             <div class="tagsHeader" style="margin-top:0">حالت اعمال پارچه روی بالشتک ها</div>
             <div class="schem" id="schem">
-              <button class="part" data-mode="single" style="color: #e2e8f0;">یک پارچه برای همه بالشتک ها</button>
-              <button class="part" data-mode="random" style="color: #e2e8f0;">دو یا سه پارچه به‌صورت تصادفی</button>
+              <button class="part" data-mode="single" style="color: #e2e8f0;">همه بالشتک‌ها با یک پارچه</button>
+              <button class="part" data-mode="tagged" style="color: #e2e8f0;">انتخاب بالشتک‌ها و پارچه‌های مختلف</button>
             </div>
           </div>
         </div>
@@ -415,8 +415,12 @@ let pillowsBaseFile = null;  // keep original base sofa File for export
 // NEW: Global quality setting (standard | high)
 let generationQuality = "high";
 
-// NEW: pillows mode selection: "single" | "random"
+// pillows mode selection:
+// - "single": one fabric for all pillows
+// - "tagged": per-pillow explicit assignment (future rounds)
 let modeSelection = "single";   // default selection
+
+
 
 let historyPage = 1;
 let historyTotal = 0;
@@ -642,11 +646,11 @@ function updateUI(){
     });
   }
 
-  // 5) Generate is always enabled; validation happens on click now
+  // 3) Generate is always enabled; validation happens on click now
   previewBtn.disabled = false;
 
-  // 3) Add Fabric management (depends on mode)
-  const multiAllowed = (modeSelection === 'random');
+  // 4) Add Fabric management (depends on mode)
+  const multiAllowed = (modeSelection === 'tagged');
   if (!multiAllowed) {
     // In single mode (or before choosing a mode), hide the Add button
     addBtn.style.display = 'none';
@@ -663,7 +667,7 @@ function updateUI(){
     }
   }
 
-  // 4) Next button: always present; disabled if there is no next fabric
+  // 5) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
   nextBtn.disabled = !(idx < fabrics.length-1);
 }
@@ -686,19 +690,15 @@ function validateBeforeGenerateSofa(){
   }
 
   if(!modeSelection){
-    errors.push("\n- باید یکی از دو حالت «همهٔ بالشتک ها با یک پارچه» یا «تا سه پارچه به‌صورت تصادفی» را انتخاب کنید.");
+    errors.push("\n- باید یکی از دو حالت «همه بالشتک‌ها با یک پارچه» یا «انتخاب بالشتک‌ها و پارچه‌های مختلف» را انتخاب کنید.");
   }
 
   if(modeSelection === 'single' && fabricsWithImg.length > 1){
     warnings.push("\n- در حالت «همهٔ بالشتک ها با یک پارچه» فقط پارچهٔ اول استفاده می‌شود؛ بقیه نادیده گرفته خواهند شد.");
   }
+  
+  // tagged mode validation will be added in later rounds
 
-  // Random mode warnings (updated logic)
-  // Only 1 fabric → warn because it will auto-switch to single mode
-  if (modeSelection === 'random' && fabricsWithImg.length === 1) {
-      warnings.push("\n- فقط یک پارچه انتخاب شده است. در صورت ادامه، حالت «تصادفی» به‌صورت خودکار به «تک‌پارچه» تغییر می‌کند.");
-  }
-  // 2 or 3 fabrics → valid random mode → no warning
 
 
   return {errors, warnings};
@@ -824,7 +824,7 @@ function handleAddBtnClick(){
   // Start fresh: clear file inputs so the next pick always fires 'change'
   try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
   try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
-  fabrics.push({id:fabrics.length, url:'', file: undefined});
+  fabrics.push({id:fabrics.length, url:'', file: undefined, tags: []});
   idx = fabrics.length-1;
   updateUI();
 }
@@ -852,7 +852,7 @@ async function handleSofaFileChange(e){
   }
 
   if (fabrics.length === 0) {
-    fabrics.push({ id: 0, url: "", file: undefined });
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
   }
   idx = 0;
 }
@@ -924,13 +924,22 @@ function handleQToggleClick(e){
 function handleSchemClick(e){
   const btn = e.target.closest('.part');
   if (!btn) return;
+
   const m = btn.dataset.mode;
   if (!m) return;
-  // Only allow choosing the mode on the first fabric step
+
+  // Mode selection is allowed only on the first fabric
   if (idx !== 0) return;
-  modeSelection = (m === 'single' ? 'single' : 'random');
+
+  if (m === "single") {
+    modeSelection = "single";
+  } else if (m === "tagged") {
+    modeSelection = "tagged";
+  }
+
   updateUI();
 }
+
 
 
 // Validation + ZIP build + download
@@ -975,15 +984,8 @@ async function handlePreviewClick(){
     if(!proceed) return;
   }
 
-  // -----------------------------------------------------------
-  // If user selected random mode but fewer than 2 fabrics exist,
-  // automatically switch to 'single' mode.
-  // -----------------------------------------------------------
-  // Auto-fix: Random mode requires at least 2 fabrics
-  if (modeSelection === 'random' && fabrics.filter(f => !!f.url).length < 2) {
-      modeSelection = 'single';
-  }
 
+  // No automatic mode switching for tagged mode (handled in later rounds)
 
 
 
@@ -1028,7 +1030,7 @@ function handleRemoveFabricClick(){
   fabrics.splice(idx,1);
 
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'', file: undefined});
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
     idx=0;
   }else{
     // Reindex ids
@@ -1133,7 +1135,7 @@ previewBtn.addEventListener('click', handlePreviewClick);
 // Ensure we start with an empty fabric slot if needed
 (function init(){
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'', file: undefined});
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
     idx=0;
   }
   // Do not call updateUI() here to avoid any visual flicker before user input.
@@ -1452,8 +1454,10 @@ async function restorePillowsFromCreation(c) {
     fabrics.push({
       id: i,                              // ✅ numeric, UI-consistent
       url: URL.createObjectURL(file),
-      file
+      file,
+      tags: []                            // ✅ required for upcoming tagging mode
     });
+
   }
 
   idx = 0;
