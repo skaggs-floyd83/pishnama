@@ -685,17 +685,12 @@ function updateUI(){
   
   
   // 
-  if (modeSelection === "tagged" && idx === 0) {
+  if (modeSelection === "tagged") {
+    baseFrame.style.display = "none";
     if (tagFrame) tagFrame.style.display = "block";
     if (tagControls) tagControls.style.display = "flex";
-
-    if (tagBaseImg && pillowsBaseFile) {
-      const u = URL.createObjectURL(pillowsBaseFile);
-      tagBaseImg.src = u;
-      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
-    }
-
   } else {
+    baseFrame.style.display = "block";
     if (tagFrame) tagFrame.style.display = "none";
     if (tagControls) tagControls.style.display = "none";
   }
@@ -745,6 +740,7 @@ function handleTagFrameClick(e){
   fabrics[idx].tags.push(tag);
 
   renderTags();
+  updateUI();
 } 
 function renderTags(){
   const frame = document.getElementById("tagFrame");
@@ -1021,8 +1017,18 @@ function handleSchemClick(e){
   if (m === "single") {
     modeSelection = "single";
   } else if (m === "tagged") {
+  // Entering tagged mode (one-time setup)
+  if (modeSelection !== "tagged") {
     modeSelection = "tagged";
+
+    if (tagBaseImg && pillowsBaseFile) {
+      const u = URL.createObjectURL(pillowsBaseFile);
+      tagBaseImg.src = u;
+      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+    }
   }
+}
+
 
   updateUI();
 }
@@ -1619,7 +1625,18 @@ async function restorePillowsFromCreation(c) {
   }
 
   idx = 0;
+
+  // 🔴 FIX: re-enter tagged-mode initialization if needed
+  if (modeSelection === "tagged") {
+    if (tagBaseImg && pillowsBaseFile) {
+      const u = URL.createObjectURL(pillowsBaseFile);
+      tagBaseImg.src = u;
+      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+    }
+  }
+
   updateUI();
+
 }
 
 
