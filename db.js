@@ -105,14 +105,17 @@ export function runMigrations() {
       mode               TEXT NOT NULL,       -- 'sofa', 'pillows', 'carpet', 'drapery', ...
       mode_selection     TEXT,                -- 'all', 'partial', 'single', 'random', etc.
       quality            TEXT,                -- 'high' | 'standard'
-      base_image_id INTEGER,
-      output_image_id INTEGER,
+      base_image_id      INTEGER,
+      base_image_raw_id  INTEGER,
+      output_image_id    INTEGER,
       meta_json          TEXT,                -- raw meta sent from frontend (for debugging)
       cost_credits       INTEGER NOT NULL,    -- credits spent for this creation
       created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (base_image_id) REFERENCES images(id) ON DELETE SET NULL,
-      FOREIGN KEY (output_image_id) REFERENCES images(id) ON DELETE SET NULL
+      FOREIGN KEY (user_id)           REFERENCES users(id)   ON DELETE CASCADE,
+      FOREIGN KEY (base_image_id)     REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (base_image_raw_id) REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (output_image_id)   REFERENCES images(id)  ON DELETE SET NULL
+
 
     );
 
@@ -121,6 +124,10 @@ export function runMigrations() {
 
     CREATE INDEX IF NOT EXISTS idx_creations_output_image
       ON creations(output_image_id);
+
+    CREATE INDEX IF NOT EXISTS idx_creations_base_image_raw
+      ON creations(base_image_raw_id);
+
       
 
     -- ============ CREATION_FABRICS (bridge: which fabrics used in a creation) ============

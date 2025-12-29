@@ -824,7 +824,7 @@ app.get("/api/creation/:id", (req, res) => {
 
 
 
-  // ---- response ----
+  // ---- response ----  
   return res.json({
     id: creation.id,
     mode: creation.mode,
@@ -834,14 +834,23 @@ app.get("/api/creation/:id", (req, res) => {
     created_at: creation.created_at,
     meta: JSON.parse(creation.meta_json || "{}"),
 
-    // IMPORTANT: return image IDs + server-resolvable URLs
+    // Generation base (annotated for tagged pillows)
     base_image_id: creation.base_image_id,
-    output_image_id: creation.output_image_id,
     base_image_url: `/media/${creation.base_image_id}`,
+
+    // Raw original base (may be NULL for non-tagged modes)
+    base_image_raw_id: creation.base_image_raw_id,
+    base_image_raw_url: creation.base_image_raw_id
+      ? `/media/${creation.base_image_raw_id}`
+      : null,
+
+    output_image_id: creation.output_image_id,
     output_image_url: `/media/${creation.output_image_id}`,
 
     fabrics
   });
+
+
 
 
 
@@ -1114,43 +1123,55 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
     
 
-  
+    const baseAnnotatedFile = processedFiles.find(f => f.fieldname === "base_image");
+    const baseRawFile       = processedFiles.find(f => f.fieldname === "base_image_raw");
 
-
-    // ====================== STORE BASE IMAGE (CLOUD + DEDUP) ===================
-    const baseFile = processedFiles.find(f => f.fieldname === "base_image");
     let baseImageId = null;
-  
+    let baseImageRawId = null;
 
-    if (baseFile) {
-      const baseUpsert = await upsertImageForUser({
+
+    // ====================== STORE BASE IMAGES (ANNOTATED + RAW) =================
+    // Annotated (generation input)
+    if (baseAnnotatedFile) {
+      const upsert = await upsertImageForUser({
         userId: req.userId,
-        buffer: baseFile.buffer,
-        mimeType: baseFile.mimetype || "image/jpeg",
+        buffer: baseAnnotatedFile.buffer,
+        mimeType: baseAnnotatedFile.mimetype || "image/jpeg",
         scope: "user"
       });
-
-      baseImageId = baseUpsert.imageId;
-
+      baseImageId = upsert.imageId;
     }
+
+    // Raw original (optional)
+    if (baseRawFile) {
+      const upsertRaw = await upsertImageForUser({
+        userId: req.userId,
+        buffer: baseRawFile.buffer,
+        mimeType: baseRawFile.mimetype || "image/jpeg",
+        scope: "user"
+      });
+      baseImageRawId = upsertRaw.imageId;
+    }
+
 
 
 
     
     // ====================== SAVE CREATION RECORD ===========================
 
-    const insert = db.prepare(`      
+    const insert = db.prepare(`            
       INSERT INTO creations (
         user_id,
         mode,
         mode_selection,
         quality,
         base_image_id,
+        base_image_raw_id,
         output_image_id,
         meta_json,
         cost_credits
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const outputImageId = outputUpsert.imageId;
@@ -1161,10 +1182,12 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       meta.mode_selection,
       meta.quality,
       baseImageId,
-      outputImageId,      
+      baseImageRawId || null,
+      outputImageId,
       JSON.stringify(meta),
       cost
     );
+
 
 
 
