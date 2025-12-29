@@ -988,7 +988,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     else if (meta.mode === "pillows" && meta.mode_selection === "single") {
       prompt = prompt3;
     }
-    else if (meta.mode === "pillows" && meta.mode_selection === "random") {
+    else if (meta.mode === "pillows" && meta.mode_selection === "tagged") {
       prompt = prompt4;
     }
     else {
