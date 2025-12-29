@@ -119,6 +119,15 @@
     background-size:cover;
     background-position:center;
   }
+  .overlay.dragEnabled.dragActive {
+    cursor: -webkit-grab;
+    cursor: grab;
+  }
+  .overlay.dragEnabled.dragActive:active {
+    cursor: -webkit-grabbing;
+    cursor: grabbing;
+  }
+
 
 
 </style>
@@ -724,6 +733,9 @@ function updateUI(){
   // 5) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
   nextBtn.disabled = !(idx < fabrics.length-1);
+
+  updateOverlayCursor();
+
 }
 
 
@@ -744,6 +756,19 @@ function handleTagFrameClick(e){
   renderTags();
   updateUI();
 } 
+
+function updateOverlayCursor(){
+  const nodes = tagFrame.querySelectorAll(".overlay");
+  nodes.forEach(d => {
+    const own = Number(d.dataset.owner);
+    if (own === idx && d.classList.contains("dragEnabled")) {
+      d.classList.add("dragActive");
+    } else {
+      d.classList.remove("dragActive");
+    }
+  });
+}
+
 
 function renderTags(){
   const frame = document.getElementById("tagFrame");
@@ -800,6 +825,27 @@ function renderTags(){
         d.releasePointerCapture(ev.pointerId);
         draggingTag = null;
       });
+      // Enable grab cursor only after the user actually moves the pointer
+      (function(){
+        let startX = null, startY = null;
+        const enableAfterMove = (ev) => {
+          if (startX === null) {
+            startX = ev.clientX;
+            startY = ev.clientY;
+            return;
+          }
+          if (Math.abs(ev.clientX - startX) > 5 || Math.abs(ev.clientY - startY) > 5) {
+            d.classList.add("dragEnabled");
+            if (Number(d.dataset.owner) === idx) {
+              d.classList.add("dragActive");
+            }
+            document.removeEventListener("pointermove", enableAfterMove);
+          }
+        };
+        document.addEventListener("pointermove", enableAfterMove);
+      })();
+
+
 
       // Prevent click-through
       d.addEventListener("click", ev => ev.stopPropagation());
@@ -807,6 +853,8 @@ function renderTags(){
       frame.appendChild(d);
     });
   });
+
+  updateOverlayCursor();
 }
 
 
@@ -1195,7 +1243,11 @@ async function handlePreviewClick(){
 
     try {
       enterLoadingState();
-      const imageBase64 = await sendToBackend(meta, included, annotatedFile);
+
+      //temporary
+      window.open(URL.createObjectURL(annotatedBlob));
+
+      // const imageBase64 = await sendToBackend(meta, included, annotatedFile);
       if (!imageBase64) return;
       baseImg2.src = "data:image/png;base64," + imageBase64;
       refreshCredits();
