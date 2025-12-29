@@ -438,6 +438,8 @@ let pillowsChosen   = false; // becomes true after an image is picked
 let fabrics      = [];    // each item: { id, url, file?:File }
 let idx          = 0;     // index of "current" fabric being edited
 let pillowsBaseFile = null;  // keep original base sofa File for export
+let draggingTag = null; // { el, pointerId }
+
 
 // NEW: Global quality setting (standard | high)
 let generationQuality = "high";
@@ -742,6 +744,7 @@ function handleTagFrameClick(e){
   renderTags();
   updateUI();
 } 
+
 function renderTags(){
   const frame = document.getElementById("tagFrame");
   if (!frame) return;
@@ -750,16 +753,64 @@ function renderTags(){
 
   fabrics.forEach((f, fi) => {
     if (!f.tags || !f.url) return;
-    f.tags.forEach(t => {
+
+    f.tags.forEach((t, ti) => {
       const d = document.createElement("div");
       d.className = "overlay";
       d.style.left = (t.x * 100) + "%";
       d.style.top  = (t.y * 100) + "%";
       d.style.backgroundImage = `url(${f.url})`;
+      d.dataset.owner = fi;
+      d.dataset.ti = ti;
+      d.style.touchAction = "none";
+
+      // ===== DRAG START =====
+      d.addEventListener("pointerdown", (ev) => {
+        if (Number(d.dataset.owner) !== idx) return;
+        ev.stopPropagation();
+        d.setPointerCapture(ev.pointerId);
+        draggingTag = { el: d, pointerId: ev.pointerId };
+      });
+
+      // ===== DRAG MOVE =====
+      d.addEventListener("pointermove", (ev) => {
+        if (!draggingTag || draggingTag.el !== d) return;
+
+        const r = frame.getBoundingClientRect();
+        let nx = (ev.clientX - r.left) / r.width;
+        let ny = (ev.clientY - r.top)  / r.height;
+
+        nx = Math.max(0, Math.min(1, nx));
+        ny = Math.max(0, Math.min(1, ny));
+
+        d.style.left = (nx * 100) + "%";
+        d.style.top  = (ny * 100) + "%";
+
+        const owner = Number(d.dataset.owner);
+        const ti = Number(d.dataset.ti);
+        if (fabrics[owner] && fabrics[owner].tags[ti]) {
+          fabrics[owner].tags[ti].x = nx;
+          fabrics[owner].tags[ti].y = ny;
+        }
+      });
+
+      // ===== DRAG END =====
+      d.addEventListener("pointerup", (ev) => {
+        if (!draggingTag || draggingTag.el !== d) return;
+        d.releasePointerCapture(ev.pointerId);
+        draggingTag = null;
+      });
+
+      // Prevent click-through
+      d.addEventListener("click", ev => ev.stopPropagation());
+
       frame.appendChild(d);
     });
   });
 }
+
+
+
 
 async function makeAnnotatedBaseImageBlob() {
   if (!baseImg2 || !pillowsBaseFile) return null;
