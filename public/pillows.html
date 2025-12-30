@@ -50,20 +50,7 @@
 
   /* Generic image frame for previews/placeholders */
   .thumb{position:relative;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:12px;min-height:120px;background:#0f172a;overflow:hidden}
-  
-  .thumb img{
-    position:absolute;
-    top:50%;
-    left:50%;
-    transform:translate(-50%, -50%);
-    max-width:100%;
-    max-height:100%;
-    width:auto;
-    height:auto;
-    display:block;
-  }
-
-
+  .thumb img{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
   .badge{position:absolute;top:8px;right:8px;background:#0f1a33;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:.85rem;color:#e5e7eb}
 
   /* Quality toggle (two-state) */
@@ -111,12 +98,7 @@
   .selectFrame{border:1px solid var(--border);border-radius:12px;padding:10px;background:#0f172a;display:flex;flex-direction:column;gap:10px;position:relative}
 
   /* Fixed heights used in mobile-safe viewport */
-  #sofaThumb,
-  #baseFrame,
-  #tagFrame {
-    height: 220px !important;
-    width: 100%;
-  }
+  #sofaThumb, #baseFrame { height: 220px !important; width: 100%; }
   #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
   .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
 
@@ -464,7 +446,6 @@ let pillowsChosen   = false; // becomes true after an image is picked
 /** @type {Fabric[]} */
 let fabrics      = [];    // each item: { id, url, file?:File }
 let idx          = 0;     // index of "current" fabric being edited
-let pillowsBaseUrl = null; // canonical object URL for base image
 let pillowsBaseFile = null;  // keep original base sofa File for export
 let draggingTag = null; // { el, pointerId }
 
@@ -1065,19 +1046,11 @@ async function handleSofaFileChange(e){
   pillowsChosen   = true;
   pillowsBaseFile = file;
 
-  if (pillowsBaseUrl) {
-    try { URL.revokeObjectURL(pillowsBaseUrl); } catch(e){}
-  }
-  pillowsBaseUrl = URL.createObjectURL(file);
-
   toFabricsBtn.disabled = false;
   sofaThumb.innerHTML = '<img>';
-  sofaThumb.firstElementChild.src = pillowsBaseUrl;
+  loadImage(sofaThumb.firstElementChild, file);
   if (baseImg2) {
-    baseImg2.src = pillowsBaseUrl;
-    if (tagBaseImg) {
-      tagBaseImg.src = pillowsBaseUrl;
-    }
+    loadImage(baseImg2, file);
   }
 
   if (fabrics.length === 0) {
@@ -1163,15 +1136,17 @@ function handleSchemClick(e){
   if (m === "single") {
     modeSelection = "single";
   } else if (m === "tagged") {
-    // Entering tagged mode (one-time setup)
-    if (modeSelection !== "tagged") {
-      modeSelection = "tagged";
+  // Entering tagged mode (one-time setup)
+  if (modeSelection !== "tagged") {
+    modeSelection = "tagged";
 
-      if (tagBaseImg && pillowsBaseFile) {
-        tagBaseImg.src = pillowsBaseUrl;
-      }
+    if (tagBaseImg && pillowsBaseFile) {
+      const u = URL.createObjectURL(pillowsBaseFile);
+      tagBaseImg.src = u;
+      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
     }
   }
+}
 
 
   updateUI();
@@ -1333,7 +1308,6 @@ function handleRemoveFabricClick(){
   }
 
   showToast("پارچه حذف شد.");
-  renderTags();
   updateUI();
 }
 
@@ -1747,11 +1721,8 @@ async function restorePillowsFromCreation(c) {
   pillowsBaseFile = baseFile;
   pillowsChosen = true;
 
-  pillowsBaseUrl = URL.createObjectURL(baseFile);
-  sofaThumb.innerHTML = '<img>';
-  sofaThumb.firstElementChild.src = pillowsBaseUrl;
-  baseImg2.src = pillowsBaseUrl;
-
+  loadImage(sofaThumb, baseFile);
+  loadImage(baseImg2, baseFile);
   // 
 
 
@@ -1781,7 +1752,9 @@ async function restorePillowsFromCreation(c) {
   // 🔴 FIX: re-enter tagged-mode initialization if needed
   if (modeSelection === "tagged") {
     if (tagBaseImg && pillowsBaseFile) {
-      tagBaseImg.src = pillowsBaseUrl;
+      const u = URL.createObjectURL(pillowsBaseFile);
+      tagBaseImg.src = u;
+      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
     }
   }
 
