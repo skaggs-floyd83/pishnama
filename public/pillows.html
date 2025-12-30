@@ -1090,6 +1090,7 @@ async function setFabricFromFile(file){
   fabrics[idx].url  = url;
   fabrics[idx].file = processed;
   fabImg.src = url;
+  renderTags();
   updateUI();
 }
 
@@ -1141,17 +1142,17 @@ function handleSchemClick(e){
   if (m === "single") {
     modeSelection = "single";
   } else if (m === "tagged") {
-  // Entering tagged mode (one-time setup)
-  if (modeSelection !== "tagged") {
-    modeSelection = "tagged";
+    // Entering tagged mode (one-time setup)
+    if (modeSelection !== "tagged") {
+      modeSelection = "tagged";
 
-    if (tagBaseImg && pillowsBaseFile) {
-      const u = URL.createObjectURL(pillowsBaseFile);
-      tagBaseImg.src = u;
-      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+      if (tagBaseImg && pillowsBaseFile) {
+        const u = URL.createObjectURL(pillowsBaseFile);
+        tagBaseImg.src = u;
+        tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+      }
     }
   }
-}
 
 
   updateUI();
@@ -1313,6 +1314,7 @@ function handleRemoveFabricClick(){
   }
 
   showToast("پارچه حذف شد.");
+  renderTags();
   updateUI();
 }
 
