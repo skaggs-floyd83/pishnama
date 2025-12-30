@@ -123,6 +123,10 @@
     border:1px solid var(--accent);
     background-size:cover;
     background-position:center;
+
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
   .overlay.dragEnabled.dragActive {
     cursor: -webkit-grab;
@@ -793,6 +797,8 @@ function renderTags(){
       d.dataset.owner = fi;
       d.dataset.ti = ti;
       d.style.touchAction = "none";
+      d.addEventListener("contextmenu", e => e.preventDefault());
+
 
       // ===== DRAG START =====
       d.addEventListener("pointerdown", (ev) => {
