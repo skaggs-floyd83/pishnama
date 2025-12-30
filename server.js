@@ -79,15 +79,40 @@ function guessExtFromMime(mime) {
   return "jpg"; // default
 }
 
+// Ensure the object exists in S3 for a given key; if not, re-upload.
+// This protects against rare cases where DB row exists but object was deleted or upload failed mid-way.
+async function ensureObjectExists({ storageKey, buffer, mimeType }) {
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: storageKey }));
+    return; // exists
+  } catch (e) {
+    // If missing (or any head failure), try to re-upload idempotently.
+    await s3.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: mimeType,
+      ACL: "private"
+    }));
+  }
+}
+
+
 // Insert-or-reuse an image row (dedup) + ensure object exists in bucket
 async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) {
-
   const hash = sha256Hex(buffer);
   const byteSize = buffer.length;
   const ext = guessExtFromMime(mimeType);
 
   const ownerUserId = scope === "user" ? userId : null;
 
+  // Stable key => perfect for dedup and CDN caching later
+  const storageKey =
+    scope === "user"
+      ? `u/${userId}/${hash}.${ext}`
+      : `g/${hash}.${ext}`;
+
+  // Fast path: if row exists, ensure object exists and return
   const existing = db.prepare(`
     SELECT id, storage_key
     FROM images
@@ -97,34 +122,44 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
   `).get(scope, ownerUserId, hash);
 
   if (existing) {
+    await ensureObjectExists({ storageKey: existing.storage_key, buffer, mimeType });
     return { imageId: existing.id, storageKey: existing.storage_key, reused: true };
   }
 
-  // Stable key => perfect for dedup and CDN caching later
-  const storageKey =
-    scope === "user"
-      ? `u/${userId}/${hash}.${ext}`
-      : `g/${hash}.${ext}`;  
-  
+  // Upload object first (idempotent because key is stable)
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: storageKey,
+    Body: buffer,
+    ContentType: mimeType,
+    ACL: "private"
+  }));
 
   try {
-    // Upload object
-    await s3.send(new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: storageKey,
-      Body: buffer,
-      ContentType: mimeType,
-      ACL: "private"
-    }));
-
     const info = db.prepare(`
       INSERT INTO images (scope, owner_user_id, sha256, byte_size, mime_type, storage_key)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(scope, ownerUserId, hash, byteSize, mimeType, storageKey);
 
     return { imageId: info.lastInsertRowid, storageKey, reused: false };
-
   } catch (err) {
+    // Race-safe dedup: another request may have inserted the same (scope, owner, sha256)
+    const msg = String(err?.message || "");
+    if (msg.includes("UNIQUE") || msg.includes("constraint")) {
+      const row = db.prepare(`
+        SELECT id, storage_key
+        FROM images
+        WHERE scope = ?
+          AND owner_user_id IS ?
+          AND sha256 = ?
+      `).get(scope, ownerUserId, hash);
+
+      if (row) {
+        await ensureObjectExists({ storageKey: row.storage_key, buffer, mimeType });
+        return { imageId: row.id, storageKey: row.storage_key, reused: true };
+      }
+    }
+
     console.error("Image upsert failed:", {
       userId,
       storageKey,
@@ -132,8 +167,41 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
     });
     throw err;
   }
-  
 }
+
+
+
+// Insert image WITHOUT deduplication (used for output images only)
+async function insertImageNoDedup({ userId, buffer, mimeType, scope = "user" }) {
+  const hash = sha256Hex(buffer); // stored for reference, NOT for dedup
+  const byteSize = buffer.length;
+  const ext = guessExtFromMime(mimeType);
+
+  const ownerUserId = scope === "user" ? userId : null;
+
+  // Unique key per call — prevents accidental reuse
+  const uniqueSuffix = crypto.randomBytes(8).toString("hex");
+  const storageKey =
+    scope === "user"
+      ? `u/${userId}/out/${Date.now()}_${uniqueSuffix}.${ext}`
+      : `g/out/${Date.now()}_${uniqueSuffix}.${ext}`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: storageKey,
+    Body: buffer,
+    ContentType: mimeType,
+    ACL: "private"
+  }));
+
+  const info = db.prepare(`
+    INSERT INTO images (scope, owner_user_id, sha256, byte_size, mime_type, storage_key)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(scope, ownerUserId, hash, byteSize, mimeType, storageKey);
+
+  return { imageId: info.lastInsertRowid, storageKey };
+}
+
 
 async function presignGetUrl(storageKey, expiresSeconds = 60) {
   const cmd = new GetObjectCommand({ Bucket: S3_BUCKET, Key: storageKey });
@@ -935,7 +1003,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // Normalize / compress uploads (server safety net)
     const processedFiles = [];
     for (const f of files) {
-      const kind = (f.fieldname === "base_image") ? "base" : "fabric";
+      const kind = (f.fieldname === "base_image" || f.fieldname === "base_image_raw") ? "base" : "fabric";
       const processed = await processUploadedImage(f, kind);
       processedFiles.push(processed);
     }
@@ -1113,13 +1181,14 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // Output image buffer from OpenAI
     const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
 
-    // Store output image in cloud (dedup)
-    const outputUpsert = await upsertImageForUser({
+    // Store output image in cloud (NO dedup — always new)
+    const outputInsert = await insertImageNoDedup({
       userId: req.userId,
       buffer: imageBuffer,
-      mimeType: "image/png", // OpenAI output is png in your current code path
+      mimeType: "image/png",
       scope: "user"
     });
+
 
     
 
@@ -1155,11 +1224,49 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
 
 
+    // ====================== REFERENTIAL INTEGRITY (Stage 3.3) =====================
+    // Wrap ALL DB writes for a generation in a single transaction.
+    // If anything fails, we roll back so we never store partial creations/fabrics.
+    // ==============================================================================
+    // ====================== SAVE CREATION RECORD (ATOMIC) ===========================
 
-    
-    // ====================== SAVE CREATION RECORD ===========================
+    // Enforce: we never store a creation without a base image
+    if (!baseAnnotatedFile || !baseImageId) {
+      return res.status(400).json({ error: "missing_base_image" });
+    }
 
-    const insert = db.prepare(`            
+    // Precompute fabric rows (async work already done above for images; this is just mapping)
+    const fabricPlans = []; // [{ ord, imageId, partsOrModePart: string[] | null | string }]
+    let fabricIndex = 1;
+
+    for (const f of processedFiles) {
+      if (f.fieldname === "base_image" || f.fieldname === "base_image_raw") continue;
+
+      // Store fabric in cloud (dedup) — OUTSIDE the DB transaction (async)
+      const fabricUpsert = await upsertImageForUser({
+        userId: req.userId,
+        buffer: f.buffer,
+        mimeType: f.mimetype || "image/jpeg",
+        scope: "user"
+      });
+
+      const ord = fabricIndex;
+
+      if (meta.mode === "sofa") {
+        const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
+        const mf = meta.fabrics.find(x => x.id === fabricKey);
+        const parts = Array.isArray(mf?.parts) ? mf.parts : [];
+        fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts });
+      } else {
+        // pillows mode: store mode_selection in `part`
+        fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts: meta.mode_selection || "pillows" });
+      }
+
+      fabricIndex++;
+    }
+
+    // Prepare statements once
+    const insertCreation = db.prepare(`            
       INSERT INTO creations (
         user_id,
         mode,
@@ -1174,31 +1281,10 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const outputImageId = outputUpsert.imageId;
-
-    const result = insert.run(
-      req.userId,
-      meta.mode,
-      meta.mode_selection,
-      meta.quality,
-      baseImageId,
-      baseImageRawId || null,
-      outputImageId,
-      JSON.stringify(meta),
-      cost
-    );
-
-
-
-
-
-
-    const creationId = result.lastInsertRowid;
-
     const insertFabric = db.prepare(`
       INSERT INTO fabrics (
         user_id,
-        image_id,        
+        image_id,
         created_at
       )
       VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1214,64 +1300,54 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       VALUES (?, ?, ?, ?)
     `);
 
-    let fabricIndex = 1;
+    const outputImageId = outputInsert.imageId;
 
-    for (const f of processedFiles) {
-      if (f.fieldname === "base_image") continue;
+    // Atomic DB mutation: either all rows exist, or none exist
+    const creationId = db.transaction(() => {      
 
-      // Store fabric in cloud (dedup)
-      const fabricUpsert = await upsertImageForUser({
-        userId: req.userId,
-        buffer: f.buffer,
-        mimeType: f.mimetype || "image/jpeg",
-        scope: "user"
-      });
-
-      const fabricImageId = fabricUpsert.imageId;
-
-
-      const fabricResult = insertFabric.run(
+      const result = insertCreation.run(
         req.userId,
-        fabricImageId
+        meta.mode,
+        meta.mode_selection,
+        meta.quality,
+        baseImageId,
+        baseImageRawId || null,
+        outputImageId,
+        JSON.stringify(meta),
+        cost
       );
 
+      const newCreationId = result.lastInsertRowid;
 
-
-      const fabricId = fabricResult.lastInsertRowid;
-
-      // ord is the fabric order: 1, 2, 3, ...
-      const ord = fabricIndex;
-
-      if (meta.mode === "sofa") {
-        const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
-        const mf = meta.fabrics.find(x => x.id === fabricKey);
-        const parts = Array.isArray(mf?.parts) ? mf.parts : [];
-
-        // If no parts selected, still insert one row
-        if (parts.length === 0) {
-          insertCreationFabric.run(creationId, fabricId, ord, null);
-        } else {
-          // One row per part (back / seat / arms)
-          for (const part of parts) {
-            insertCreationFabric.run(creationId, fabricId, ord, part);
-          }
+      for (const plan of fabricPlans) {
+        // Never insert a fabric row without an image id
+        if (!plan.imageId) {
+          throw new Error("fabric_image_missing");
         }
-      } else {
-        // pillows mode: store mode_selection in `part`
-        insertCreationFabric.run(
-          creationId,
-          fabricId,
-          ord,
-          meta.mode_selection || "pillows"
-        );
+
+        const fabricResult = insertFabric.run(req.userId, plan.imageId);
+        const fabricId = fabricResult.lastInsertRowid;
+
+        if (meta.mode === "sofa") {
+          const parts = Array.isArray(plan.parts) ? plan.parts : [];
+
+          if (parts.length === 0) {
+            insertCreationFabric.run(newCreationId, fabricId, plan.ord, null);
+          } else {
+            for (const part of parts) {
+              insertCreationFabric.run(newCreationId, fabricId, plan.ord, part);
+            }
+          }
+        } else {
+          // pillows: plan.parts is a string
+          insertCreationFabric.run(newCreationId, fabricId, plan.ord, String(plan.parts || "pillows"));
+        }
       }
 
+      return newCreationId;
+    })();
 
-      fabricIndex++;
-    }
-
-
-
+    // creationId is now guaranteed to have all linked rows
 
 
 
@@ -1287,14 +1363,15 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // ------------------------------------------------------------------
     // Return the base64 image + updated credits
     // ------------------------------------------------------------------
-     res.json({
+    res.json({
       // IMPORTANT: return IDs + URLs (not base64)
       creation_id: creationId,
       base_image_id: baseImageId,
       output_image_id: outputImageId,
 
-      base_image_url: baseImagePath,
-      output_image_url: outputImagePath,
+      base_image_url: `/media/${baseImageId}`,
+      output_image_url: `/media/${outputImageId}`,
+
 
       credits_remaining: updatedCredits.credits,
       credits_expires_at: updatedCredits.credits_expires_at
