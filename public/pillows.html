@@ -887,32 +887,52 @@ async function makeAnnotatedBaseImageBlob() {
   }
 
 
-  // draw each tag as a fabric-textured square
+  
+  // draw each tag as a colored + named marker (F1/F2/F3), like server_____2.js
+  const COLORS = { F1: "#ff3b30", F2: "#34c759", F3: "#0a84ff" };
+
   fabrics.forEach((f, fi) => {
-    if (!f.tags || !f.url) return;
+    if (!f.tags || !f.tags.length) return;
+
+    const label = `F${fi + 1}`;
+    const fill = COLORS[label] || "#ffffff";
 
     f.tags.forEach(t => {
       const cx = t.x * frameRect.width * sx;
       const cy = t.y * frameRect.height * sy;
 
-      const size = 16 * ((sx + sy) / 2);
-      const half = size / 2;
-      
-      const patImg = fabricImgCache.get(f.url);
-      if (!patImg) return;
+      // Radius scaled similarly to the demo (but in your canvas coordinate system)
+      const r = Math.max(10, canvas.width * 0.018);
 
+      // Filled circle
       ctx.save();
       ctx.beginPath();
-      ctx.rect(cx - half, cy - half, size, size);
-      ctx.clip();
-      ctx.drawImage(patImg, cx - half, cy - half, size, size);
-      ctx.restore();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.globalAlpha = 0.92;
+      ctx.fill();
+      ctx.globalAlpha = 1;
 
-      ctx.strokeStyle = "#22c55e";
-      ctx.lineWidth = Math.max(2, size * 0.12);
-      ctx.strokeRect(cx - half, cy - half, size, size);
+      // Subtle border
+      ctx.lineWidth = Math.max(2, canvas.width * 0.002);
+      ctx.strokeStyle = "rgba(0,0,0,.25)";
+      ctx.stroke();
+
+      // White label text (F1/F2/F3)
+      ctx.fillStyle = "#fff";
+      ctx.font = `${Math.floor(r * 0.9)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, cx, cy);
+
+      ctx.restore();
     });
   });
+
+
+
+
+
 
   return await new Promise(res =>
     canvas.toBlob(res, "image/png", 0.92)
