@@ -264,8 +264,22 @@ app.get("/", (req, res) => {
 // ===========================================
 
 
+// ====================== HARD UPLOAD GUARDRAILS (Stage 4.4) ===================
+// Hard caps to prevent memory spikes and unexpected provider costs.
+const MAX_UPLOAD_FILES_HARD = 8;                 // base + base_raw + up to 6 fabrics (future-safe)
+const MAX_UPLOAD_FILE_BYTES_HARD = 20 * 1024 * 1024; // 20 MB per file hard reject (pre-sharp)
+const MAX_TOTAL_UPLOAD_BYTES_HARD = 40 * 1024 * 1024; // 40 MB total (pre-sharp)
+const MAX_FABRICS_HARD = 3;                      // current product rule (sofa: up to 3, pillows: up to 3)
+
 // We store uploads in memory because we immediately pipe them to the OpenAI API.
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_UPLOAD_FILE_BYTES_HARD,
+    files: MAX_UPLOAD_FILES_HARD
+  }
+});
+
 
 // ---------------------------------------------------------------------------
 //  Define ALL FOUR PROMPTS explicitly
@@ -796,7 +810,6 @@ app.get("/media/:imageId", async (req, res) => {
 
 
 
-
 // ====================== IMAGE NORMALIZATION / COMPRESSION ===================
 
 const MAX_BASE_BYTES_SERVER   = 4 * 1024 * 1024; // 4 MB server threshold for base
@@ -1119,6 +1132,45 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const meta = JSON.parse(req.body.meta);
     const files = req.files;
 
+    
+    // ====================== HARD GUARDRAILS (Stage 4.4) ======================
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: "no_files" });
+    }
+
+    if (files.length > MAX_UPLOAD_FILES_HARD) {
+      return res.status(400).json({ error: "too_many_files" });
+    }
+
+    // Total bytes guard (multer fileSize limits each file; this caps sum)
+    const totalBytes = files.reduce((sum, f) => sum + (f?.size || 0), 0);
+    if (totalBytes > MAX_TOTAL_UPLOAD_BYTES_HARD) {
+      return res.status(400).json({ error: "payload_too_large" });
+    }
+
+    // Enforce fieldnames: only allow base_image, base_image_raw, and fabrics
+    // (We treat any other non-base field as "fabric", but we reject obviously wrong payloads.)
+    const allowedBaseFields = new Set(["base_image", "base_image_raw"]);
+
+    const fabricFiles = files.filter(f => !allowedBaseFields.has(f.fieldname));
+    if (fabricFiles.length > MAX_FABRICS_HARD) {
+      return res.status(400).json({ error: "too_many_fabrics" });
+    }
+
+    // Enforce minimum fabrics by mode (cost-safe + predictable)
+    if (meta?.mode === "pillows" && meta?.mode_selection === "single" && fabricFiles.length !== 1) {
+      return res.status(400).json({ error: "invalid_fabric_count" });
+    }
+    if (meta?.mode === "pillows" && meta?.mode_selection === "tagged" && fabricFiles.length < 2) {
+      return res.status(400).json({ error: "invalid_fabric_count" });
+    }
+    // Sofa modes: allow 1..3 fabrics (partial can be 1; all can be 1..3 depending on UI)
+    if (meta?.mode === "sofa" && (fabricFiles.length < 1 || fabricFiles.length > MAX_FABRICS_HARD)) {
+      return res.status(400).json({ error: "invalid_fabric_count" });
+    }
+
+
+
     // Normalize / compress uploads (server safety net)
     const processedFiles = [];
     for (const f of files) {
@@ -1309,6 +1361,13 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // ====================== STORE OUTPUT IMAGE (CLOUD + DEDUP) ===================
     // Output image buffer from OpenAI
     const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
+
+    // Hard cap output size (cost + storage guardrail)
+    const MAX_OUTPUT_BYTES_HARD = 12 * 1024 * 1024; // 12 MB
+    if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {
+      return res.status(500).json({ error: "output_too_large" });
+    }
+
 
     // Store output image in cloud (NO dedup — always new)
     const outputInsert = await insertImageNoDedup({
