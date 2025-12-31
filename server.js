@@ -520,6 +520,19 @@ function addDaysToNow(days) {
 // Receives: { identifier: "email OR phone" }
 // ===============================================
 app.post("/api/request-code", express.json(), async (req, res) => {
+
+  // Rate limit protection
+  const ip = req.ip || req.connection.remoteAddress || "unknown";
+  const rl = rateLimit({
+    key: `request-code:${ip}`,
+    limit: 5,
+    windowMs: 10 * 60 * 1000 // 10 minutes
+  });
+  if (!rl.allowed) {
+    return res.status(429).json({ error: "too_many_requests" });
+  }
+
+
   try {
     let { identifier } = req.body;
     if (!identifier) {
@@ -556,6 +569,19 @@ app.post("/api/request-code", express.json(), async (req, res) => {
 // Returns: { token }
 // ===============================================
 app.post("/api/verify-code", express.json(), (req, res) => {
+
+  // Rate limit protection
+  const ip = req.ip || req.connection.remoteAddress || "unknown";
+  const rl = rateLimit({
+    key: `verify-code:${ip}`,
+    limit: 10,
+    windowMs: 10 * 60 * 1000 // 10 minutes
+  });
+  if (!rl.allowed) {
+    return res.status(429).json({ error: "too_many_requests" });
+  }
+
+
   let { identifier, code } = req.body;
   if (!identifier || !code)
     return res.status(400).json({ error: "missing fields" });
@@ -637,6 +663,31 @@ function readCookie(req, name) {
   return null;
 }
 
+// ====================== RATE LIMITING (Stage 4.3) ===========================
+// Simple in-memory token buckets (single-instance safe)
+
+const rateBuckets = new Map(); 
+// key -> { count, resetAt }
+
+function rateLimit({ key, limit, windowMs }) {
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    rateBuckets.set(key, bucket);
+  }
+
+  bucket.count += 1;
+
+  return {
+    allowed: bucket.count <= limit,
+    remaining: Math.max(0, limit - bucket.count),
+    resetAt: bucket.resetAt
+  };
+}
+
+
  
 app.use((req, res, next) => {
   const headerToken = req.headers["x-user-token"];
@@ -689,6 +740,18 @@ app.get("/media/:imageId", async (req, res) => {
   if (!req.userId) {
     return res.status(401).json({ error: "login_required" });
   }
+
+  // Rate limit protection
+  const rl = rateLimit({
+    key: `media:${req.userId}`,
+    limit: 120,
+    windowMs: 60 * 1000 // 1 minute
+  });
+  if (!rl.allowed) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+
+
 
   const imageId = Number(req.params.imageId);
   if (!imageId) return res.status(400).json({ error: "invalid_image_id" });
@@ -1072,6 +1135,16 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
     if (!req.userId) {
       return res.status(401).json({ error: "login_required" });
+    }
+
+    // Rate limit protection
+    const rl = rateLimit({
+      key: `generate:${req.userId}`,
+      limit: 5,
+      windowMs: 60 * 60 * 1000 // 1 hour
+    });
+    if (!rl.allowed) {
+      return res.status(429).json({ error: "rate_limited" });
     }
 
 
