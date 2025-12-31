@@ -699,7 +699,12 @@ app.get("/media/:imageId", async (req, res) => {
     WHERE id = ?
   `).get(imageId);
 
-  if (!img) return res.status(404).json({ error: "not_found" });
+  
+  if (!img) {
+    // Do not leak whether an image ever existed
+    return res.status(404).json({ error: "not_found" });
+  }
+
 
   // Access rule:
   // - scope='user' => only owner can access
@@ -711,10 +716,19 @@ app.get("/media/:imageId", async (req, res) => {
 
   try {
     const url = await presignGetUrl(img.storage_key, 60);
+
+    // Prevent caching of redirects to signed URLs
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+
     return res.redirect(302, url);
+
   } catch (e) {
-    return res.status(500).json({ error: "media_unavailable" });
+    // Do not leak storage or presign failures
+    return res.status(404).json({ error: "not_found" });
   }
+
 });
 
 
