@@ -249,10 +249,10 @@ const HISTORY_PAGE_SIZE_MAX = 50;
 const app = express();
 
 // ===========================
-// SIMPLE IN-MEMORY LOGIN STORE
+// LOGIN CODE STORE (single-instance OK)
 // ===========================
-const loginCodes = {};     // { emailOrPhone : "1234" }
-const userTokens = {};     // { token : emailOrPhone }
+const loginCodes = {}; // short-lived, single-instance
+
 
 
 // ===== static file serving  =====
@@ -405,6 +405,10 @@ async function sendLoginSms(phone, code) {
 
   console.log("SMS send accepted by panel:", resultText);
 }
+
+
+// ====================== AUTH TOKEN CONFIG ===========================
+const AUTH_TOKEN_DAYS = 30; // persistent login lifetime
 
 
 // ====================== CREDIT CONFIG & HELPERS===========================
@@ -588,9 +592,20 @@ app.post("/api/verify-code", express.json(), (req, res) => {
     row = { id: info.lastInsertRowid };
   }
 
-  // 3) Generate token and map it to user.id (NOT identifier)
+  // 3) Generate persistent token and store in DB
   const token = crypto.randomBytes(24).toString("hex");
-  userTokens[token] = row.id;
+
+  const expiresAt = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + AUTH_TOKEN_DAYS);
+    return d.toISOString();
+  })();
+
+  db.prepare(`
+    INSERT INTO auth_tokens (token, user_id, expires_at)
+    VALUES (?, ?, ?)
+  `).run(token, row.id, expiresAt);
+
 
 
   // Set a cookie so <img src="/media/..."> is authenticated
@@ -622,19 +637,46 @@ function readCookie(req, name) {
   return null;
 }
 
+ 
 app.use((req, res, next) => {
   const headerToken = req.headers["x-user-token"];
   const cookieToken = readCookie(req, "pishnama_token");
   const queryToken = req.query?.t;
 
   const token = headerToken || cookieToken || queryToken;
+  if (!token) return next();
 
-  if (token && userTokens[token]) {
-    req.userId = userTokens[token];
-    req.userToken = token; // keep original token string for generating media URLs
+  const row = db.prepare(`
+    SELECT user_id
+    FROM auth_tokens
+    WHERE token = ?
+      AND expires_at > datetime('now')
+  `).get(token);
+
+  if (row) {
+    req.userId = row.user_id;
+    req.userToken = token;
   }
+
   next();
 });
+
+app.post("/api/logout", (req, res) => {
+  if (!req.userToken) {
+    return res.status(200).json({ ok: true });
+  }
+
+  db.prepare(`DELETE FROM auth_tokens WHERE token = ?`)
+    .run(req.userToken);
+
+  res.setHeader(
+    "Set-Cookie",
+    "pishnama_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+  );
+
+  return res.json({ ok: true });
+});
+
 
 
 // ===============================================

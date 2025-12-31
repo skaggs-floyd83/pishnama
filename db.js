@@ -37,6 +37,25 @@ export function runMigrations() {
 
 
 
+    -- ============ AUTH TOKENS (persistent login) ============
+
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      token        TEXT PRIMARY KEY,
+      user_id      INTEGER NOT NULL,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at   TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_user
+      ON auth_tokens(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires
+      ON auth_tokens(expires_at);
+
+
+
+      
 
     -- ============ IMAGES
     CREATE TABLE IF NOT EXISTS images (
