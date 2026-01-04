@@ -174,8 +174,8 @@
 
 
     <div class="menu" id="menu">
-      <a href="sofa.html">🛋️ طراحی مبل</a>
-      <a href="pillows.html">🛋️ طراحی بالشتک ها</a>
+      <a href="sofa">🛋️ طراحی مبل</a>
+      <a href="pillows">🛋️ طراحی بالشتک ها</a>
     </div>
   </div>
 
@@ -1661,7 +1661,7 @@ reuseCreationBtn.onclick = () => {
     });
   }
 
-  // IMPORTANT: define what THIS page is (sofa.html = "pillows" in your current implementation)
+  // IMPORTANT: define what THIS page is
   const THIS_PAGE_MODE = "pillows";
 
   // If creation belongs to another mode, jump to the correct page and restore there
@@ -1674,9 +1674,9 @@ reuseCreationBtn.onclick = () => {
 
     // Navigate
     if (c.mode === "sofa") {
-      window.location.href = "sofa.html";
+      window.location.href = "sofa";
     } else if (c.mode === "pillows") {
-      window.location.href = "pillows.html";
+      window.location.href = "pillows";
     } else {
       // Unknown future mode (carpet/curtain/...) — don’t crash
       alert("این نوع تولید هنوز در این صفحه پشتیبانی نمی‌شود.");
