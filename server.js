@@ -256,11 +256,23 @@ const loginCodes = {}; // short-lived, single-instance
 
 
 // ===== static file serving  =====
-app.use(express.static(path.join(__dirname, "public")));
+app.use("/ui", express.static(path.join(__dirname, "public", "static")));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "sofa.html"));
 });
+
+// Explicit HTML entry points (no directory-wide static serving)
+app.get("/sofa", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "sofa.html"));
+});
+
+app.get("/pillows", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "pillows.html"));
+});
+
+
+
 // ===========================================
 
 
