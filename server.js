@@ -44,7 +44,8 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 
 
 
-dotenv.config();
+dotenv.config({ quiet: true });
+
 
 // ====================== S3-COMPATIBLE STORAGE (NEW) ===========================
 // Works with AWS S3 and S3-compatible providers (MinIO, Wasabi, Backblaze B2 S3, etc.)
