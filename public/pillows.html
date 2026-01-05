@@ -1277,9 +1277,9 @@ async function handlePreviewClick(){
       enterLoadingState();
 
       //temporary
-      window.open(URL.createObjectURL(annotatedBlob));
+      // window.open(URL.createObjectURL(annotatedBlob));
 
-      // const imageBase64 = await sendToBackend(meta, included, annotatedFile);
+      const imageBase64 = await sendToBackend(meta, included, annotatedFile);
       if (!imageBase64) return;
       baseImg2.src = "data:image/png;base64," + imageBase64;
       refreshCredits();
