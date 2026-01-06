@@ -31,7 +31,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>پیشنما — بالشتک ها</title>
 <style>
-  :root{--bg:#0b1020;--card:#0f162b;--muted:#94a3b8;--text:#e5e7eb;--border:#243045;--accent:#22c55e;--blue:#1f3a8a}
+  /* =========================
+   Theme variables
+   Default = dark
+  ========================= */
+  :root{
+    --bg:#0b1020;
+    --card:#0f162b;
+    --muted:#94a3b8;
+    --text:#e5e7eb;
+    --border:#243045;
+    --accent:#22c55e;
+    --blue:#1f3a8a;
+  }
+
+  /* =========================
+    Light mode overrides
+  ========================= */
+  html[data-theme="light"]{
+    --bg:#f8fafc;
+    --card:#ffffff;
+    --muted:#475569;
+    --text:#0f172a;
+    --border:#e2e8f0;
+    --accent:#16a34a;
+    --blue:#2563eb;
+  }
+
   html,body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,IRANSans,Segoe UI,Roboto,Arial}
   .wrap{max-width:480px;margin:0 auto;min-height:100svh;/* replaced */ height:auto;/* added */display:flex;flex-direction:column}
   .bar{position:relative;padding:10px 14px;display:flex;justify-content:flex-start;align-items:center}
@@ -176,6 +202,20 @@
     <div class="menu" id="menu">
       <a href="sofa">🛋️ طراحی مبل</a>
       <a href="pillows">🛋️ طراحی بالشتک ها</a>
+      <button
+        id="themeToggleBtn"
+        style="
+          background:transparent;
+          border:0;
+          color:inherit;
+          padding:10px 12px;
+          text-align:right;
+          cursor:pointer;
+          font-family:inherit;
+        ">
+        🌗 تغییر حالت نمایش
+      </button>
+
     </div>
   </div>
 
@@ -1972,6 +2012,21 @@ window.addEventListener("storage", (e) => {
       if (ci) { ci.textContent = ""; ci.style.display = "none"; }
     }
 
+    // =========================
+    // Theme sync across tabs
+    // =========================
+    if (e.key === "pishnama_theme") {
+        const theme = e.newValue || "dark";
+        document.documentElement.setAttribute("data-theme", theme);
+
+        const btn = document.getElementById("themeToggleBtn");
+        if (btn) {
+            btn.textContent = theme === "dark"
+              ? "☀️ حالت روشن"
+              : "🌙 حالت تیره";
+        }
+    }
+
 
 });
 
@@ -2021,6 +2076,48 @@ window.addEventListener("storage", (e) => {
 
 </script>
 
+<script>
+/* =========================
+   Theme toggle with OS detect + icon swap
+========================= */
+(function initThemeToggle(){
+  const KEY = "pishnama_theme";
+  const btn = document.getElementById("themeToggleBtn");
+
+  function apply(theme){
+    document.documentElement.setAttribute("data-theme", theme);
+    if (btn) {
+      btn.textContent = theme === "dark"
+        ? "☀️ حالت روشن"
+        : "🌙 حالت تیره";
+    }
+  }
+
+  function detectOSTheme(){
+    return window.matchMedia &&
+           window.matchMedia("(prefers-color-scheme: dark)").matches
+           ? "dark"
+           : "light";
+  }
+
+  // Priority:
+  // 1) User choice
+  // 2) OS preference
+  const saved = localStorage.getItem(KEY);
+  const initial = saved || detectOSTheme();
+  apply(initial);
+
+  if (btn) {
+    btn.addEventListener("click", () => {
+      const current =
+        document.documentElement.getAttribute("data-theme") || initial;
+      const next = current === "dark" ? "light" : "dark";
+      localStorage.setItem(KEY, next);
+      apply(next);
+    });
+  }
+})();
+</script>
 
 </body>
 </html>
