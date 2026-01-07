@@ -1385,207 +1385,215 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
     
 
+    
+
+    async function runPersistenceOnce() {
+      
+      // Hard cap output size (cost + storage guardrail)
+      const MAX_OUTPUT_BYTES_HARD = 12 * 1024 * 1024; // 12 MB
+      if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {          
+        throw new Error("output_too_large");    
+      }
 
 
-    setImmediate(async () => {
-      try {
-
-        
-        // Hard cap output size (cost + storage guardrail)
-        const MAX_OUTPUT_BYTES_HARD = 12 * 1024 * 1024; // 12 MB
-        if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {          
-          throw new Error("output_too_large");    
-        }
+      // Store output image in cloud (NO dedup — always new)
+      const outputInsert = await insertImageNoDedup({
+        userId: req.userId,
+        buffer: imageBuffer,
+        mimeType: "image/png",
+        scope: "user"
+      });
 
 
-        // Store output image in cloud (NO dedup — always new)
-        const outputInsert = await insertImageNoDedup({
+      
+
+      const baseAnnotatedFile = processedFiles.find(f => f.fieldname === "base_image");
+      const baseRawFile       = processedFiles.find(f => f.fieldname === "base_image_raw");
+
+      let baseImageId = null;
+      let baseImageRawId = null;
+
+
+      // ====================== STORE BASE IMAGES (ANNOTATED + RAW) =================
+      // Annotated (generation input)
+      if (baseAnnotatedFile) {
+        const upsert = await upsertImageForUser({
           userId: req.userId,
-          buffer: imageBuffer,
-          mimeType: "image/png",
+          buffer: baseAnnotatedFile.buffer,
+          mimeType: baseAnnotatedFile.mimetype || "image/jpeg",
+          scope: "user"
+        });
+        baseImageId = upsert.imageId;
+      }
+
+      // Raw original (optional)
+      if (baseRawFile) {
+        const upsertRaw = await upsertImageForUser({
+          userId: req.userId,
+          buffer: baseRawFile.buffer,
+          mimeType: baseRawFile.mimetype || "image/jpeg",
+          scope: "user"
+        });
+        baseImageRawId = upsertRaw.imageId;
+      }
+
+
+
+      // ====================== REFERENTIAL INTEGRITY (Stage 3.3) =====================
+      // Wrap ALL DB writes for a generation in a single transaction.
+      // If anything fails, we roll back so we never store partial creations/fabrics.
+      // ==============================================================================
+      // ====================== SAVE CREATION RECORD (ATOMIC) ===========================
+
+      // logging a creation without a base image
+      if (!baseAnnotatedFile || !baseImageId) {
+        throw new Error("missing_base_image");
+      }
+
+
+      // Precompute fabric rows (async work already done above for images; this is just mapping)
+      const fabricPlans = []; // [{ ord, imageId, partsOrModePart: string[] | null | string }]
+      let fabricIndex = 1;
+
+      for (const f of processedFiles) {
+        if (f.fieldname === "base_image" || f.fieldname === "base_image_raw") continue;
+
+        // Store fabric in cloud (dedup) — OUTSIDE the DB transaction (async)
+        const fabricUpsert = await upsertImageForUser({
+          userId: req.userId,
+          buffer: f.buffer,
+          mimeType: f.mimetype || "image/jpeg",
           scope: "user"
         });
 
+        const ord = fabricIndex;
 
-        
-
-        const baseAnnotatedFile = processedFiles.find(f => f.fieldname === "base_image");
-        const baseRawFile       = processedFiles.find(f => f.fieldname === "base_image_raw");
-
-        let baseImageId = null;
-        let baseImageRawId = null;
-
-
-        // ====================== STORE BASE IMAGES (ANNOTATED + RAW) =================
-        // Annotated (generation input)
-        if (baseAnnotatedFile) {
-          const upsert = await upsertImageForUser({
-            userId: req.userId,
-            buffer: baseAnnotatedFile.buffer,
-            mimeType: baseAnnotatedFile.mimetype || "image/jpeg",
-            scope: "user"
-          });
-          baseImageId = upsert.imageId;
+        if (meta.mode === "sofa") {
+          const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
+          const mf = meta.fabrics.find(x => x.id === fabricKey);
+          const parts = Array.isArray(mf?.parts) ? mf.parts : [];
+          fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts });
+        } else {
+          // pillows mode: store mode_selection in `part`
+          fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts: meta.mode_selection || "pillows" });
         }
 
-        // Raw original (optional)
-        if (baseRawFile) {
-          const upsertRaw = await upsertImageForUser({
-            userId: req.userId,
-            buffer: baseRawFile.buffer,
-            mimeType: baseRawFile.mimetype || "image/jpeg",
-            scope: "user"
-          });
-          baseImageRawId = upsertRaw.imageId;
-        }
+        fabricIndex++;
+      }
 
+      // Prepare statements once
+      const insertCreation = db.prepare(`            
+        INSERT INTO creations (
+          user_id,
+          mode,
+          mode_selection,
+          quality,
+          base_image_id,
+          base_image_raw_id,
+          output_image_id,
+          meta_json,
+          cost_credits
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
+      const insertFabric = db.prepare(`
+        INSERT INTO fabrics (
+          user_id,
+          image_id,
+          created_at
+        )
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `);
 
-        // ====================== REFERENTIAL INTEGRITY (Stage 3.3) =====================
-        // Wrap ALL DB writes for a generation in a single transaction.
-        // If anything fails, we roll back so we never store partial creations/fabrics.
-        // ==============================================================================
-        // ====================== SAVE CREATION RECORD (ATOMIC) ===========================
+      const insertCreationFabric = db.prepare(`
+        INSERT INTO creation_fabrics (
+          creation_id,
+          fabric_id,
+          ord,
+          part
+        )
+        VALUES (?, ?, ?, ?)
+      `);
 
-        // logging a creation without a base image
-        if (!baseAnnotatedFile || !baseImageId) {
-          throw new Error("missing_base_image");
-        }
+      const outputImageId = outputInsert.imageId;
 
+      // Atomic DB mutation: either all rows exist, or none exist
+      const creationId = db.transaction(() => {      
 
-        // Precompute fabric rows (async work already done above for images; this is just mapping)
-        const fabricPlans = []; // [{ ord, imageId, partsOrModePart: string[] | null | string }]
-        let fabricIndex = 1;
+        const result = insertCreation.run(
+          req.userId,
+          meta.mode,
+          meta.mode_selection,
+          meta.quality,
+          baseImageId,
+          baseImageRawId || null,
+          outputImageId,
+          JSON.stringify(meta),
+          cost
+        );
 
-        for (const f of processedFiles) {
-          if (f.fieldname === "base_image" || f.fieldname === "base_image_raw") continue;
+        const newCreationId = result.lastInsertRowid;
 
-          // Store fabric in cloud (dedup) — OUTSIDE the DB transaction (async)
-          const fabricUpsert = await upsertImageForUser({
-            userId: req.userId,
-            buffer: f.buffer,
-            mimeType: f.mimetype || "image/jpeg",
-            scope: "user"
-          });
+        for (const plan of fabricPlans) {
+          // Never insert a fabric row without an image id
+          if (!plan.imageId) {
+            throw new Error("fabric_image_missing");
+          }
 
-          const ord = fabricIndex;
+          const fabricResult = insertFabric.run(req.userId, plan.imageId);
+          const fabricId = fabricResult.lastInsertRowid;
 
           if (meta.mode === "sofa") {
-            const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
-            const mf = meta.fabrics.find(x => x.id === fabricKey);
-            const parts = Array.isArray(mf?.parts) ? mf.parts : [];
-            fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts });
-          } else {
-            // pillows mode: store mode_selection in `part`
-            fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts: meta.mode_selection || "pillows" });
-          }
+            const parts = Array.isArray(plan.parts) ? plan.parts : [];
 
-          fabricIndex++;
+            if (parts.length === 0) {
+              insertCreationFabric.run(newCreationId, fabricId, plan.ord, null);
+            } else {
+              for (const part of parts) {
+                insertCreationFabric.run(newCreationId, fabricId, plan.ord, part);
+              }
+            }
+          } else {
+            // pillows: plan.parts is a string
+            insertCreationFabric.run(newCreationId, fabricId, plan.ord, String(plan.parts || "pillows"));
+          }
         }
 
-        // Prepare statements once
-        const insertCreation = db.prepare(`            
-          INSERT INTO creations (
-            user_id,
-            mode,
-            mode_selection,
-            quality,
-            base_image_id,
-            base_image_raw_id,
-            output_image_id,
-            meta_json,
-            cost_credits
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
+        return newCreationId;
+      })();
 
-        const insertFabric = db.prepare(`
-          INSERT INTO fabrics (
-            user_id,
-            image_id,
-            created_at
-          )
-          VALUES (?, ?, CURRENT_TIMESTAMP)
-        `);
-
-        const insertCreationFabric = db.prepare(`
-          INSERT INTO creation_fabrics (
-            creation_id,
-            fabric_id,
-            ord,
-            part
-          )
-          VALUES (?, ?, ?, ?)
-        `);
-
-        const outputImageId = outputInsert.imageId;
-
-        // Atomic DB mutation: either all rows exist, or none exist
-        const creationId = db.transaction(() => {      
-
-          const result = insertCreation.run(
-            req.userId,
-            meta.mode,
-            meta.mode_selection,
-            meta.quality,
-            baseImageId,
-            baseImageRawId || null,
-            outputImageId,
-            JSON.stringify(meta),
-            cost
-          );
-
-          const newCreationId = result.lastInsertRowid;
-
-          for (const plan of fabricPlans) {
-            // Never insert a fabric row without an image id
-            if (!plan.imageId) {
-              throw new Error("fabric_image_missing");
-            }
-
-            const fabricResult = insertFabric.run(req.userId, plan.imageId);
-            const fabricId = fabricResult.lastInsertRowid;
-
-            if (meta.mode === "sofa") {
-              const parts = Array.isArray(plan.parts) ? plan.parts : [];
-
-              if (parts.length === 0) {
-                insertCreationFabric.run(newCreationId, fabricId, plan.ord, null);
-              } else {
-                for (const part of parts) {
-                  insertCreationFabric.run(newCreationId, fabricId, plan.ord, part);
-                }
-              }
-            } else {
-              // pillows: plan.parts is a string
-              insertCreationFabric.run(newCreationId, fabricId, plan.ord, String(plan.parts || "pillows"));
-            }
-          }
-
-          return newCreationId;
-        })();
-
-        // creationId is now guaranteed to have all linked rows
+      // creationId is now guaranteed to have all linked rows
 
 
 
 
-        // ====================== CREDIT DEDUCTION ===========================
+      // ====================== CREDIT DEDUCTION ===========================
 
-        // Deduct credits only AFTER successful generation
-        deductCredits(req.userId, cost);
+      // Deduct credits only AFTER successful generation
+      deductCredits(req.userId, cost);
 
-        // Fetch updated credit state
-        const updatedCredits = getUserCredits(req.userId);
+      // Fetch updated credit state
+      const updatedCredits = getUserCredits(req.userId);
 
-        
-        
+    } 
 
-      } catch (err) {
-        persistenceFailed = true;
-        console.error("Background persistence failed:", err);
+    setImmediate(async () => {
+      try {
+        await runPersistenceOnce();
+      } catch (err1) {
+        console.warn("Persistence attempt 1 failed, retrying once:", err1.message);
+
+        try {
+          await runPersistenceOnce();
+        } catch (err2) {
+          persistenceFailed = true;
+          console.error("Persistence failed after retry:", err2);
+        }
       }
     });
+
+
 
     setTimeout(() => {
       if (persistenceFailed) {
