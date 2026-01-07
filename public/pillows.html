@@ -1397,6 +1397,11 @@ async function sendToBackend(meta, included, baseFile) {
     );
     return null;
   }
+
+  if (data?.persistence_failed) {
+    showToast("⚠️ تصویر ذخیره نشد. اعتباری از شما کسر نشد.");
+  }
+
   return data.image_base64;
 
   

@@ -1377,9 +1377,14 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
     // ====================== FAST RESPONSE TO USER ======================
     // Respond immediately with the generated image
+    let persistenceFailed = false;
     res.json({
-      image_base64: imageBuffer.toString("base64")
+      image_base64: imageBuffer.toString("base64"),
+      persistence_pending: true
     });
+
+    
+
 
 
     setImmediate(async () => {
@@ -1577,10 +1582,16 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         
 
       } catch (err) {
+        persistenceFailed = true;
         console.error("Background persistence failed:", err);
       }
     });
 
+    setTimeout(() => {
+      if (persistenceFailed) {
+        console.warn("Persistence failed after image delivery (no credits deducted)");
+      }
+    }, 0);
 
 
 
