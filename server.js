@@ -1005,6 +1005,7 @@ app.get("/api/creation/:id", (req, res) => {
   const fabricRows = db.prepare(`
     SELECT
       f.id AS fabric_id,
+      f.image_id AS image_id,
       cf.ord AS ord,
       cf.part AS part
     FROM creation_fabrics cf
@@ -1014,18 +1015,23 @@ app.get("/api/creation/:id", (req, res) => {
   `).all(creationId);
 
 
+
+
+
   // Rebuild frontend-compatible fabric objects from ord + part
   const grouped = new Map(); // key = `${ord}:${fabric_id}`
 
   for (const r of fabricRows) {
     const key = `${r.ord}:${r.fabric_id}`;
 
-    if (!grouped.has(key)) {
+    if (!grouped.has(key)) {      
       grouped.set(key, {
         id: r.fabric_id,
+        image_id: r.image_id,
         role: `fabric_${String(r.ord).padStart(2, "0")}`,
         meta: { parts: [] }
       });
+
     }
 
     if (r.part) {
@@ -1033,7 +1039,12 @@ app.get("/api/creation/:id", (req, res) => {
     }
   }
 
-  const fabrics = Array.from(grouped.values());
+  
+  const fabrics = Array.from(grouped.values()).map(f => ({
+    ...f,
+    image_url: `/media/${f.image_id}`
+  }));
+
 
 
 
