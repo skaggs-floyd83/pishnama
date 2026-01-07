@@ -691,7 +691,17 @@ async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
 function gotoUpload(){
   stepFabrics.classList.remove('active');
   stepUpload.classList.add('active');
+
+  // 🔧 FIX: restore base image preview when navigating back
+  if (pillowsBaseFile && sofaThumb) {
+    sofaThumb.innerHTML = '<img>';
+    loadImage(sofaThumb.firstElementChild, pillowsBaseFile);
+
+    // allow going forward again after restore
+    toFabricsBtn.disabled = false;
+  }
 }
+
 function gotoFabrics(){
   stepUpload.classList.remove('active');
   stepFabrics.classList.add('active');
@@ -745,6 +755,7 @@ function updateUI(){
   
   
   // 
+  const baseFrame = document.getElementById('baseFrame');
   if (modeSelection === "tagged") {
     baseFrame.style.display = "none";
     if (tagFrame) tagFrame.style.display = "block";
@@ -781,7 +792,25 @@ function updateUI(){
 
   // 5) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
-  nextBtn.disabled = !(idx < fabrics.length-1);
+  
+  // Can move to next fabric only if:
+  // 1) there IS a next fabric
+  // 2) current fabric is semantically ready
+  let canAdvance = false;
+
+  if (idx < fabrics.length - 1) {
+    if (modeSelection === "single") {
+      canAdvance = !!cur.url;
+    } else {
+      canAdvance =
+        !!cur.url &&
+        Array.isArray(cur.tags) &&
+        cur.tags.length > 0;
+    }
+  }
+
+  nextBtn.disabled = !canAdvance;
+
 
   updateOverlayCursor();
 

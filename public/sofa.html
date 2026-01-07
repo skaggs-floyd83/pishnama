@@ -642,7 +642,17 @@ async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
 function gotoUpload(){
   stepFabrics.classList.remove('active');
   stepUpload.classList.add('active');
+
+  // re-render base image when returning to stage 1 (e.g. after restore)
+  if (sofaBaseFile && sofaThumb) {
+    sofaThumb.innerHTML = '<img>';
+    loadImage(sofaThumb.firstElementChild, sofaBaseFile);
+
+    // allow going forward again after restore
+    toFabricsBtn.disabled = false;
+  }
 }
+
 function gotoFabrics(){
   stepUpload.classList.remove('active');
   stepFabrics.classList.add('active');
@@ -706,7 +716,25 @@ function updateUI(){
 
   // 4) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
-  nextBtn.disabled = !(idx < fabrics.length-1);
+  
+  // Can move to next fabric only if:
+  // 1) there IS a next fabric
+  // 2) current fabric is semantically ready
+  let canAdvance = false;
+
+  if (idx < fabrics.length - 1) {
+    if (modeSelection === "single") {
+      canAdvance = !!cur.url;
+    } else {
+      canAdvance =
+        !!cur.url &&
+        Array.isArray(cur.tags) &&
+        cur.tags.length > 0;
+    }
+  }
+
+  nextBtn.disabled = !canAdvance;
+
 }
 
 /* ===================== Validation (pre-generation) ======================== */
@@ -1517,7 +1545,8 @@ async function restoreSofaFromCreation(c) {
 
   sofaBaseFile = baseFile;          // your existing variable in sofa workflow
   sofaChosen = true;                // your existing state
-  loadImage(sofaThumb, baseFile);   // stage 1 preview
+  sofaThumb.innerHTML = '<img>';
+  loadImage(sofaThumb.firstElementChild, baseFile); // stage 1 preview
   loadImage(baseImg2, baseFile);    // stage 2 preview
 
   // 3) Rebuild fabrics array from server list (UI-consistent IDs)
