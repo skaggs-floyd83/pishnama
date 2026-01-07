@@ -1375,6 +1375,24 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // Output image buffer from OpenAI
     const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
 
+
+    // Upload output image ONCE (reused across retries)
+    let outputImageInsert = null;
+
+    async function ensureOutputImageUploadedOnce() {
+      if (outputImageInsert) return outputImageInsert;
+
+      outputImageInsert = await insertImageNoDedup({
+        userId: req.userId,
+        buffer: imageBuffer,
+        mimeType: "image/png",
+        scope: "user"
+      });
+
+      return outputImageInsert;
+    }
+
+
     // ====================== FAST RESPONSE TO USER ======================
     // Respond immediately with the generated image
     let persistenceFailed = false;
@@ -1394,16 +1412,6 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {          
         throw new Error("output_too_large");    
       }
-
-
-      // Store output image in cloud (NO dedup — always new)
-      const outputInsert = await insertImageNoDedup({
-        userId: req.userId,
-        buffer: imageBuffer,
-        mimeType: "image/png",
-        scope: "user"
-      });
-
 
       
 
@@ -1516,7 +1524,10 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         VALUES (?, ?, ?, ?)
       `);
 
+      
+      const outputInsert = await ensureOutputImageUploadedOnce();
       const outputImageId = outputInsert.imageId;
+
 
       // Atomic DB mutation: either all rows exist, or none exist
       const creationId = db.transaction(() => {      
