@@ -268,6 +268,20 @@
     </section>
   </div>
 </div>
+<div id="restoreOverlay"
+     style="
+       position:fixed;
+       inset:0;
+       background:rgba(0,0,0,0.55);
+       display:none;
+       align-items:center;
+       justify-content:center;
+       z-index:100000;
+       color:#fff;
+       font-size:16px;
+     ">
+  ⏳ در حال بازگردانی…
+</div>
 
 <script>
 /* =============================================================================
@@ -1206,6 +1220,19 @@ function exitLoadingState() {
 }
 
 
+function enterRestoreLoading() {
+  const o = document.getElementById("restoreOverlay");
+  if (o) o.style.display = "flex";
+}
+
+function exitRestoreLoading() {
+  const o = document.getElementById("restoreOverlay");
+  if (o) o.style.display = "none";
+}
+
+
+
+
 /* ============================== Event Bindings ============================ */
 
 // Hamburger + outside close
@@ -1525,11 +1552,23 @@ async function fetchUrlAsFile(url, filename) {
 }
 
 async function restoreSofaFromCreation(c) {
+
+  enterRestoreLoading();
+
   // HARD RESET before restore
   fabrics = [];
   idx = 0;
   sofaChosen = false;
   sofaBaseFile = null;
+
+  // 🔒 IMMEDIATE UI CLEAR
+  fabImg.src = "";
+  fabImg.style.visibility = "hidden";
+  baseImg2.src = "";
+  sofaThumb.innerHTML = "";
+  nextBtn.disabled = true;
+  prevStep.disabled = true;
+  addBtn.disabled = true;
 
   // Must have base image
   if (!c.base_image_url) {
@@ -1537,8 +1576,8 @@ async function restoreSofaFromCreation(c) {
     return;
   }
 
-  // 1) Go to fabrics step UI
-  gotoFabrics();
+  // 1) Go to fabrics step UI (removed)
+  
 
   // 2) Restore base image preview + file
   const baseFile = await fetchUrlAsFile(c.base_image_url, "base.jpg");
@@ -1585,6 +1624,16 @@ async function restoreSofaFromCreation(c) {
   // 5) Reset current fabric index and sync UI
   idx = 0;
   updateUI();
+
+  // 🔓 RE-ENABLE UI AFTER RESTORE
+  prevStep.disabled = false;
+  addBtn.disabled = false;
+
+  gotoFabrics();   // enforce Option A: stage switch AFTER restore completes
+
+  exitRestoreLoading();
+
+  
 }
 
 

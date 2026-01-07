@@ -315,6 +315,20 @@
     </section>
   </div>
 </div>
+<div id="restoreOverlay"
+     style="
+       position:fixed;
+       inset:0;
+       background:rgba(0,0,0,0.55);
+       display:none;
+       align-items:center;
+       justify-content:center;
+       z-index:100000;
+       color:#fff;
+       font-size:16px;
+     ">
+  ⏳ در حال بازگردانی…
+</div>
 
 <script>
 /* =============================================================================
@@ -1450,6 +1464,16 @@ function exitLoadingState() {
 }
 
 
+function enterRestoreLoading() {
+  const o = document.getElementById("restoreOverlay");
+  if (o) o.style.display = "flex";
+}
+
+function exitRestoreLoading() {
+  const o = document.getElementById("restoreOverlay");
+  if (o) o.style.display = "none";
+}
+
 
 /* ============================== Event Bindings ============================ */
 
@@ -1774,12 +1798,23 @@ async function fetchUrlAsFile(url, filename) {
 }
 
 async function restorePillowsFromCreation(c) {
+  enterRestoreLoading();
+
   // HARD RESET before restore
   fabrics = [];
   idx = 0;
   modeSelection = "single";
   pillowsChosen = false;
   pillowsBaseFile = null;
+
+  // 🔒 IMMEDIATE UI CLEAR
+  fabImg.src = "";
+  fabImg.style.visibility = "hidden";
+  baseImg2.src = "";
+  sofaThumb.innerHTML = "";
+  nextBtn.disabled = true;
+  prevStep.disabled = true;
+  addBtn.disabled = true;
 
   
 
@@ -1846,6 +1881,12 @@ async function restorePillowsFromCreation(c) {
   }
 
   gotoFabrics();   // 🔧 REQUIRED: advance to stage 2 after restore
+
+  // 🔓 RE-ENABLE UI AFTER RESTORE
+  prevStep.disabled = false;
+  addBtn.disabled = false;
+
+  exitRestoreLoading();
 
 }
 
