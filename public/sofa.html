@@ -266,6 +266,23 @@
         </div>
       </div>
     </section>
+
+    <!-- ===== Stage 3: Output ===== -->
+    <section id="step-output" class="section">
+      <div class="card">
+        <h3 style="margin:0 0 10px">✅ نتیجه نهایی</h3>
+
+        <div class="thumb" style="margin-bottom:12px">
+          <img id="outputImg" alt="">
+        </div>
+
+        <div class="row between">
+          <button class="btn" id="backToEditBtn">✏️ ویرایش</button>
+          <button class="btn primary" id="shareBtn">🔗 اشتراک‌گذاری</button>
+        </div>
+      </div>
+    </section>
+
   </div>
 </div>
 <div id="restoreOverlay"
@@ -672,6 +689,16 @@ function gotoFabrics(){
   stepFabrics.classList.add('active');
   updateUI();
 }
+
+const stepOutput = document.getElementById("step-output");
+const outputImg = document.getElementById("outputImg");
+function gotoOutput() {
+  stepUpload.classList.remove("active");
+  stepFabrics.classList.remove("active");
+  stepOutput.classList.add("active");
+}
+
+
 
 /* ============================== Core UI Sync ============================== */
 /*
@@ -1108,10 +1135,11 @@ async function handlePreviewClick(){
   const {meta, included} = buildSofaMetaAndFiles();
 
   try {
-    enterLoadingState();
+    enterRestoreLoading();
     const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
     if (!imageBase64) return;
-    baseImg2.src = "data:image/png;base64," + imageBase64;
+    outputImg.src = "data:image/png;base64," + imageBase64;
+    gotoOutput();
     refreshCredits();
   } catch (err) {
     console.error(err);
@@ -1122,7 +1150,7 @@ async function handlePreviewClick(){
     }
     showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
   } finally {
-    exitLoadingState();
+    exitRestoreLoading();
   }
 
 
@@ -1259,6 +1287,27 @@ schem  .addEventListener('click', handleSchemClick);
 
 // Generate (Preview)
 previewBtn.addEventListener('click', handlePreviewClick);
+
+document.getElementById("backToEditBtn")?.addEventListener("click", () => {
+  gotoFabrics();
+});
+
+document.getElementById("shareBtn")?.addEventListener("click", async () => {
+  if (!outputImg.src) return;
+
+  try {
+    await navigator.share({
+      title: "Pishnama",
+      text: "طراحی انجام‌شده با پیشنما",
+      url: outputImg.src
+    });
+  } catch {
+    showToast("اشتراک‌گذاری پشتیبانی نمی‌شود.");
+  }
+});
+
+
+
 
 // Remove fabric (IIFE in original → direct binding here)
 (function bindRemoveFabric(){
