@@ -1598,10 +1598,7 @@ reuseCreationBtn.onclick = async () => {
     return;
   }
 
-  // Same-mode restore (this page = sofa)
-  restoreSofaFromCreation(c);
-  creationPreviewModal.style.display = "none";
-
+  
   // Same-mode restore (this page = sofa)
   try {
     await restoreSofaFromCreation(c);
