@@ -774,8 +774,8 @@ function updateUI(){
   // 2) current fabric has an image AND at least one sofa part selected
   let canAdvance = false;
 
-  if (idx < fabrics.length - 1) {
-    canAdvance = !!cur.url && cur.parts && cur.parts.size > 0;
+  if (idx < fabrics.length - 1) {    
+    canAdvance = !!cur.url && !!cur.parts && cur.parts.size > 0;
   }
 
   nextBtn.disabled = !canAdvance;
@@ -1556,7 +1556,7 @@ creationPreviewModal.addEventListener("click", (e) => {
   }
 });
 
-reuseCreationBtn.onclick = () => {
+reuseCreationBtn.onclick = async () => {
   // ALWAYS close history when reusing a creation
   if (historyModal) {
     historyModal.style.display = "none";
@@ -1601,6 +1601,20 @@ reuseCreationBtn.onclick = () => {
   // Same-mode restore (this page = sofa)
   restoreSofaFromCreation(c);
   creationPreviewModal.style.display = "none";
+
+  // Same-mode restore (this page = sofa)
+  try {
+    await restoreSofaFromCreation(c);
+  } catch (e) {
+    console.error("Restore failed:", e);
+    showToast("بازگردانی با خطا مواجه شد.");
+    // alert("بازگردانی با خطا مواجه شد.");
+  }
+  creationPreviewModal.style.display = "none";
+
+
+
+
 
 };
 
@@ -1651,49 +1665,78 @@ async function restoreSofaFromCreation(c) {
     loadImage(sofaThumb.firstElementChild, baseFile); // stage 1 preview
     loadImage(baseImg2, baseFile);    // stage 2 preview
 
-    // 3) Rebuild fabrics array from server list (UI-consistent IDs)
-    fabrics = [];
-    for (let i = 0; i < c.fabrics.length; i++) {
-      const f = c.fabrics[i];
-      const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
+        // 3+4) Rebuild fabrics + restore parts using ROLE/ID mapping (NOT index-based)
+    // This prevents c.fabrics[] and c.meta.fabrics[] ordering mismatches.
 
-      fabrics.push({
-        id: i,                      // ✅ numeric ID (0,1,2)
-        url: URL.createObjectURL(file),
+    // Build: role -> File
+    const filesByRole = {};
+    for (let i = 0; i < (c.fabrics || []).length; i++) {
+      const f = c.fabrics[i];
+      if (!f || !f.image_url) continue;
+
+      const role =
+        (typeof f.role === "string" && f.role) ||
+        `fabric_${String(i + 1).padStart(2, "0")}`;
+
+      filesByRole[role] = await fetchUrlAsFile(f.image_url, `${role}.jpg`);
+    }
+
+    // Build: role/id -> parts[]
+    const partsByRole = {};
+    if (c.meta && Array.isArray(c.meta.fabrics)) {
+      for (const mf of c.meta.fabrics) {
+        if (!mf || typeof mf.id !== "string") continue;
+        if (!Array.isArray(mf.parts)) continue;
+        partsByRole[mf.id] = mf.parts.slice();
+      }
+    }
+
+    // Decide roles in stable order (01,02,03), include only ones we actually have an image for
+    const ORDER = ["fabric_01", "fabric_02", "fabric_03"];
+    const rolesToUse = ORDER.filter(r => !!filesByRole[r]);
+
+    // Fallback: if server uses nonstandard roles, include any extra roles too (stable-ish)
+    if (rolesToUse.length === 0) {
+      const extraRoles = Object.keys(filesByRole).sort();
+      rolesToUse.push(...extraRoles);
+    }
+
+    // Build fabrics array in UI slot order
+    fabrics = rolesToUse.map((role, slotIdx) => {
+      const file = filesByRole[role];
+      const url = URL.createObjectURL(file);
+
+      const p = Array.isArray(partsByRole[role]) ? partsByRole[role] : [];
+      return {
+        id: slotIdx,
+        url,
         file,
-        parts: new Set()
+        parts: new Set(p)
+      };
+    });
+
+    // Rebuild assigned map from restored fabric.parts
+    assigned = { back: null, seat: null, arms: null };
+    for (const fab of fabrics) {
+      if (!fab || !fab.parts) continue;
+      fab.parts.forEach(p => {
+        assigned[p] = fab.id;
       });
     }
 
 
-    // 4) Restore part assignment using meta (index-based)
-    assigned = { back: null, seat: null, arms: null };
-
-    if (c.meta && Array.isArray(c.meta.fabrics)) {
-      for (let i = 0; i < c.meta.fabrics.length; i++) {
-        const mf = c.meta.fabrics[i];
-        const fab = fabrics[i]; // index-aligned
-
-        if (!fab || !Array.isArray(mf.parts)) continue;
-
-        mf.parts.forEach(p => {
-          fab.parts.add(p);
-          assigned[p] = fab.id;
-        });
-      }
-    }
-
-
+    
     // 5) Reset current fabric index and sync UI
     idx = 0;
-    updateUI();
 
-    // 🔓 RE-ENABLE UI AFTER RESTORE
+    // ✅ symmetry with fresh flow (so Stage-1 "Continue" is not stuck disabled after restore)
+    toFabricsBtn.disabled = false;
+
+    gotoFabrics(); // stage 2 + updateUI()
+
+    // 🔓 RE-ENABLE UI AFTER RESTORE (other enable/disable is handled by updateUI)
     prevStep.disabled = false;
-    addBtn.disabled = false;
 
-    
-    gotoFabrics();
     await Promise.all([
       waitForImage(sofaThumb.querySelector("img")),
       waitForImage(baseImg2)

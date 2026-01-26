@@ -1808,7 +1808,7 @@ creationPreviewModal.addEventListener("click", (e) => {
   }
 });
 
-reuseCreationBtn.onclick = () => {
+reuseCreationBtn.onclick = async () => {
   // ALWAYS close history when reusing a creation
   if (historyModal) {
     historyModal.style.display = "none";
@@ -1850,9 +1850,15 @@ reuseCreationBtn.onclick = () => {
   }
 
   
-  // Same-mode restore (this page = pillows)  
-  restorePillowsFromCreation(c);
+  // Same-mode restore (this page = pillows)
+  try {
+    await restorePillowsFromCreation(c);
+  } catch (e) {
+    console.error("Restore failed:", e);
+    alert("بازگردانی با خطا مواجه شد.");
+  }
   creationPreviewModal.style.display = "none";
+
 
 };
 
@@ -1909,6 +1915,10 @@ async function restorePillowsFromCreation(c) {
 
     pillowsBaseFile = baseFile;
     pillowsChosen = true;
+
+    // ✅ symmetry with fresh flow (so Stage-1 "Continue" is not stuck disabled after restore)
+    toFabricsBtn.disabled = false;
+
 
     sofaThumb.innerHTML = '<img>';
     loadImage(sofaThumb.firstElementChild, baseFile);
