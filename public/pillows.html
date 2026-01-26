@@ -580,6 +580,19 @@ function loadImage(el, file){
   el.onload = () => URL.revokeObjectURL(url);
 }
 
+function waitForImage(img) {
+  return new Promise(resolve => {
+    if (!img) return resolve();
+    // ✅ IMPORTANT: if there's no src, onload/onerror will never fire → resolve immediately
+    if (!img.src) return resolve();
+    if (img.complete && img.naturalWidth > 0) return resolve();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+  });
+}
+
+
+
 // Fetch & render history
 async function loadHistory(reset = false) {
   const token = localStorage.getItem("pishnama_user_token");
@@ -1344,10 +1357,13 @@ async function handlePreviewClick(){
     try {
       enterRestoreLoading();
       const imageBase64 = await sendToBackend(meta, included, pillowsBaseFile);
-      if (!imageBase64) return;
+      if (!imageBase64) return;      
+
       outputImg.src = "data:image/png;base64," + imageBase64;
       gotoOutput();
+      await waitForImage(outputImg);
       refreshCredits();
+
     } finally {
       exitRestoreLoading();
     }
@@ -1395,7 +1411,9 @@ async function handlePreviewClick(){
       if (!imageBase64) return;
       outputImg.src = "data:image/png;base64," + imageBase64;
       gotoOutput();
+      await waitForImage(outputImg);
       refreshCredits();
+
     } finally {
       exitRestoreLoading();
     }
@@ -1848,94 +1866,111 @@ async function fetchUrlAsFile(url, filename) {
 
 async function restorePillowsFromCreation(c) {
   enterRestoreLoading();
+  try{
+    // HARD RESET before restore
+    fabrics = [];
+    idx = 0;
+    modeSelection = "single";
+    pillowsChosen = false;
+    pillowsBaseFile = null;
 
-  // HARD RESET before restore
-  fabrics = [];
-  idx = 0;
-  modeSelection = "single";
-  pillowsChosen = false;
-  pillowsBaseFile = null;
+    // 🔒 IMMEDIATE UI CLEAR
+    fabImg.src = "";
+    fabImg.style.visibility = "hidden";
+    baseImg2.src = "";
+    sofaThumb.innerHTML = "";
+    nextBtn.disabled = true;
+    prevStep.disabled = true;
+    addBtn.disabled = true;
 
-  // 🔒 IMMEDIATE UI CLEAR
-  fabImg.src = "";
-  fabImg.style.visibility = "hidden";
-  baseImg2.src = "";
-  sofaThumb.innerHTML = "";
-  nextBtn.disabled = true;
-  prevStep.disabled = true;
-  addBtn.disabled = true;
+    
 
+    // 1) Restore base image preview + file
+    
+    let restoreBaseUrl = null;
+
+    // Decide restore source based on mode
+    if (c.mode_selection === "tagged") {
+      if (!c.base_image_raw_url) {
+        alert("این تولید قابلیت بازگردانی ندارد (تصویر پایهٔ اصلی ذخیره نشده است).");
+        return;
+      }
+      restoreBaseUrl = c.base_image_raw_url;
+    } else {
+      if (!c.base_image_url) {
+        alert("این تولید تصویر پایه ندارد.");
+        return;
+      }
+      restoreBaseUrl = c.base_image_url;
+    }
+
+    // Restore base image file
+    const baseFile = await fetchUrlAsFile(restoreBaseUrl, "base.jpg");
+
+    pillowsBaseFile = baseFile;
+    pillowsChosen = true;
+
+    sofaThumb.innerHTML = '<img>';
+    loadImage(sofaThumb.firstElementChild, baseFile);
+    loadImage(baseImg2, baseFile);
+
+    // 
+
+
+    // 2) Restore mode selection (single/random) from c.mode_selection
+    if (typeof c.mode_selection === "string") {
+      modeSelection = c.mode_selection;  // your existing state var
+      // update any UI highlight for mode buttons here if you have them
+    }
+
+    // 3) Restore fabrics
+    fabrics = [];
+    for (let i = 0; i < c.fabrics.length; i++) {
+      const f = c.fabrics[i];
+      const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
+
+      fabrics.push({
+        id: i,                              // ✅ numeric, UI-consistent
+        url: URL.createObjectURL(file),
+        file,
+        tags: []                            // ✅ required for upcoming tagging mode
+      });
+
+    }
+
+    idx = 0;
+
+    // 🔴 FIX: re-enter tagged-mode initialization if needed
+    if (modeSelection === "tagged") {
+      if (tagBaseImg && pillowsBaseFile) {
+        const u = URL.createObjectURL(pillowsBaseFile);
+        tagBaseImg.src = u;
+        tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+      }
+    }
+
+    
+    gotoFabrics(); // advance to stage 2 after restore
+
+    // 🔓 RE-ENABLE UI AFTER RESTORE
+    prevStep.disabled = false;
+    // addBtn.disabled = false;
+
+    await Promise.all([
+      waitForImage(sofaThumb.querySelector("img")),
+      waitForImage(baseImg2),
+      waitForImage(tagBaseImg)
+    ]);
+
+  } finally {
+    exitRestoreLoading();
+  }
   
 
-  // 1) Restore base image preview + file
+
+
+
   
-  let restoreBaseUrl = null;
-
-  // Decide restore source based on mode
-  if (c.mode_selection === "tagged") {
-    if (!c.base_image_raw_url) {
-      alert("این تولید قابلیت بازگردانی ندارد (تصویر پایهٔ اصلی ذخیره نشده است).");
-      return;
-    }
-    restoreBaseUrl = c.base_image_raw_url;
-  } else {
-    if (!c.base_image_url) {
-      alert("این تولید تصویر پایه ندارد.");
-      return;
-    }
-    restoreBaseUrl = c.base_image_url;
-  }
-
-  // Restore base image file
-  const baseFile = await fetchUrlAsFile(restoreBaseUrl, "base.jpg");
-
-  pillowsBaseFile = baseFile;
-  pillowsChosen = true;
-
-  loadImage(sofaThumb, baseFile);
-  loadImage(baseImg2, baseFile);
-  // 
-
-
-  // 2) Restore mode selection (single/random) from c.mode_selection
-  if (typeof c.mode_selection === "string") {
-    modeSelection = c.mode_selection;  // your existing state var
-    // update any UI highlight for mode buttons here if you have them
-  }
-
-  // 3) Restore fabrics
-  fabrics = [];
-  for (let i = 0; i < c.fabrics.length; i++) {
-    const f = c.fabrics[i];
-    const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
-
-    fabrics.push({
-      id: i,                              // ✅ numeric, UI-consistent
-      url: URL.createObjectURL(file),
-      file,
-      tags: []                            // ✅ required for upcoming tagging mode
-    });
-
-  }
-
-  idx = 0;
-
-  // 🔴 FIX: re-enter tagged-mode initialization if needed
-  if (modeSelection === "tagged") {
-    if (tagBaseImg && pillowsBaseFile) {
-      const u = URL.createObjectURL(pillowsBaseFile);
-      tagBaseImg.src = u;
-      tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
-    }
-  }
-
-  gotoFabrics();   // 🔧 REQUIRED: advance to stage 2 after restore
-
-  // 🔓 RE-ENABLE UI AFTER RESTORE
-  prevStep.disabled = false;
-  addBtn.disabled = false;
-
-  exitRestoreLoading();
 
 }
 

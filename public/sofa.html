@@ -124,7 +124,6 @@
   #toast.show{opacity:1}
 
 </style>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -527,6 +526,17 @@ function loadImage(el, file){
   el.onload = () => URL.revokeObjectURL(url);
 }
 
+function waitForImage(img) {
+  return new Promise(resolve => {
+    if (!img) return resolve();
+    if (img.complete && img.naturalWidth > 0) return resolve();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+  });
+}
+
+
+
 // Fetch & render history
 async function loadHistory(reset = false) {
   const token = localStorage.getItem("pishnama_user_token");
@@ -758,23 +768,21 @@ function updateUI(){
   // 4) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
   
+
   // Can move to next fabric only if:
   // 1) there IS a next fabric
-  // 2) current fabric is semantically ready
+  // 2) current fabric has an image AND at least one sofa part selected
   let canAdvance = false;
 
   if (idx < fabrics.length - 1) {
-    if (modeSelection === "single") {
-      canAdvance = !!cur.url;
-    } else {
-      canAdvance =
-        !!cur.url &&
-        Array.isArray(cur.tags) &&
-        cur.tags.length > 0;
-    }
+    canAdvance = !!cur.url && cur.parts && cur.parts.size > 0;
   }
 
   nextBtn.disabled = !canAdvance;
+
+
+
+
 
 }
 
@@ -1138,9 +1146,14 @@ async function handlePreviewClick(){
     enterRestoreLoading();
     const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
     if (!imageBase64) return;
+
     outputImg.src = "data:image/png;base64," + imageBase64;
     gotoOutput();
+    await waitForImage(outputImg);
     refreshCredits();
+
+
+
   } catch (err) {
     console.error(err);
     // Do NOT show "خطا..." if the user was logged out automatically
@@ -1603,84 +1616,93 @@ async function fetchUrlAsFile(url, filename) {
 async function restoreSofaFromCreation(c) {
 
   enterRestoreLoading();
+  try{
 
-  // HARD RESET before restore
-  fabrics = [];
-  idx = 0;
-  sofaChosen = false;
-  sofaBaseFile = null;
+    // HARD RESET before restore
+    fabrics = [];
+    idx = 0;
+    sofaChosen = false;
+    sofaBaseFile = null;
 
-  // 🔒 IMMEDIATE UI CLEAR
-  fabImg.src = "";
-  fabImg.style.visibility = "hidden";
-  baseImg2.src = "";
-  sofaThumb.innerHTML = "";
-  nextBtn.disabled = true;
-  prevStep.disabled = true;
-  addBtn.disabled = true;
+    // 🔒 IMMEDIATE UI CLEAR
+    fabImg.src = "";
+    fabImg.style.visibility = "hidden";
+    baseImg2.src = "";
+    sofaThumb.innerHTML = "";
+    nextBtn.disabled = true;
+    prevStep.disabled = true;
+    addBtn.disabled = true;
 
-  // Must have base image
-  if (!c.base_image_url) {
-    alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
-    return;
-  }
+    // Must have base image
+    if (!c.base_image_url) {
+      alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
+      return;
+    }
 
-  // 1) Go to fabrics step UI (removed)
-  
+    // 1) Go to fabrics step UI (removed)
+    
 
-  // 2) Restore base image preview + file
-  const baseFile = await fetchUrlAsFile(c.base_image_url, "base.jpg");
+    // 2) Restore base image preview + file
+    const baseFile = await fetchUrlAsFile(c.base_image_url, "base.jpg");
 
-  sofaBaseFile = baseFile;          // your existing variable in sofa workflow
-  sofaChosen = true;                // your existing state
-  sofaThumb.innerHTML = '<img>';
-  loadImage(sofaThumb.firstElementChild, baseFile); // stage 1 preview
-  loadImage(baseImg2, baseFile);    // stage 2 preview
+    sofaBaseFile = baseFile;          // your existing variable in sofa workflow
+    sofaChosen = true;                // your existing state
+    sofaThumb.innerHTML = '<img>';
+    loadImage(sofaThumb.firstElementChild, baseFile); // stage 1 preview
+    loadImage(baseImg2, baseFile);    // stage 2 preview
 
-  // 3) Rebuild fabrics array from server list (UI-consistent IDs)
-  fabrics = [];
-  for (let i = 0; i < c.fabrics.length; i++) {
-    const f = c.fabrics[i];
-    const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
+    // 3) Rebuild fabrics array from server list (UI-consistent IDs)
+    fabrics = [];
+    for (let i = 0; i < c.fabrics.length; i++) {
+      const f = c.fabrics[i];
+      const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
 
-    fabrics.push({
-      id: i,                      // ✅ numeric ID (0,1,2)
-      url: URL.createObjectURL(file),
-      file,
-      parts: new Set()
-    });
-  }
-
-
-  // 4) Restore part assignment using meta (index-based)
-  assigned = { back: null, seat: null, arms: null };
-
-  if (c.meta && Array.isArray(c.meta.fabrics)) {
-    for (let i = 0; i < c.meta.fabrics.length; i++) {
-      const mf = c.meta.fabrics[i];
-      const fab = fabrics[i]; // index-aligned
-
-      if (!fab || !Array.isArray(mf.parts)) continue;
-
-      mf.parts.forEach(p => {
-        fab.parts.add(p);
-        assigned[p] = fab.id;
+      fabrics.push({
+        id: i,                      // ✅ numeric ID (0,1,2)
+        url: URL.createObjectURL(file),
+        file,
+        parts: new Set()
       });
     }
+
+
+    // 4) Restore part assignment using meta (index-based)
+    assigned = { back: null, seat: null, arms: null };
+
+    if (c.meta && Array.isArray(c.meta.fabrics)) {
+      for (let i = 0; i < c.meta.fabrics.length; i++) {
+        const mf = c.meta.fabrics[i];
+        const fab = fabrics[i]; // index-aligned
+
+        if (!fab || !Array.isArray(mf.parts)) continue;
+
+        mf.parts.forEach(p => {
+          fab.parts.add(p);
+          assigned[p] = fab.id;
+        });
+      }
+    }
+
+
+    // 5) Reset current fabric index and sync UI
+    idx = 0;
+    updateUI();
+
+    // 🔓 RE-ENABLE UI AFTER RESTORE
+    prevStep.disabled = false;
+    addBtn.disabled = false;
+
+    
+    gotoFabrics();
+    await Promise.all([
+      waitForImage(sofaThumb.querySelector("img")),
+      waitForImage(baseImg2)
+    ]);
+
+  } finally {
+    exitRestoreLoading();
   }
-
-
-  // 5) Reset current fabric index and sync UI
-  idx = 0;
-  updateUI();
-
-  // 🔓 RE-ENABLE UI AFTER RESTORE
-  prevStep.disabled = false;
-  addBtn.disabled = false;
-
-  gotoFabrics();   // enforce Option A: stage switch AFTER restore completes
-
-  exitRestoreLoading();
+  
 
   
 }
