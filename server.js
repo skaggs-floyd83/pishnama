@@ -992,6 +992,7 @@ app.get("/api/creation/:id", (req, res) => {
       created_at,
       meta_json,
       base_image_id,
+      base_image_raw_id,
       output_image_id
     FROM creations
     WHERE id = ? AND user_id = ?
