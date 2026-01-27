@@ -1712,6 +1712,7 @@ const creationPreviewFabrics = document.getElementById("creationPreviewFabrics")
 const reuseCreationBtn = document.getElementById("reuseCreationBtn");
 
 let lastPreviewedCreation = null;
+let previewRequestId = 0;
 
 
 
@@ -1769,6 +1770,9 @@ async function openCreationPreview(creationId) {
   const token = localStorage.getItem("pishnama_user_token");
   if (!token) return;
 
+  const requestId = ++previewRequestId;
+  creationPreviewImage.removeAttribute("src");
+
   let data;
   try {
     ({ data } = await fetchWithAuth(`/api/creation/${creationId}`));
@@ -1776,6 +1780,7 @@ async function openCreationPreview(creationId) {
     return;
   }
 
+  if (requestId !== previewRequestId) return;
 
   lastPreviewedCreation = data;
 
