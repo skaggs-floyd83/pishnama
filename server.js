@@ -42,6 +42,9 @@ import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 
+import https from "https";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+
 
 
 dotenv.config({ quiet: true });
@@ -60,6 +63,7 @@ if (!S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
   console.warn("WARNING: S3 storage env vars missing. Cloud storage will not work until configured.");
 }
 
+
 const s3 = new S3Client({
   region: S3_REGION,
   endpoint: S3_ENDPOINT || undefined,
@@ -67,8 +71,43 @@ const s3 = new S3Client({
   credentials: {
     accessKeyId: S3_ACCESS_KEY_ID || "",
     secretAccessKey: S3_SECRET_ACCESS_KEY || ""
-  }
+  },
+
+  // Helps a LOT with random ECONNRESET / socket drops on some S3-compatible providers
+  requestHandler: new NodeHttpHandler({
+    httpsAgent: new https.Agent({
+      keepAlive: true,
+      maxSockets: 50
+    }),
+    connectionTimeout: 10_000, // 10s to establish connection
+    socketTimeout: 120_000     // 120s for upload/download
+  }),
+
+  // AWS SDK retry behavior; keep modest
+  maxAttempts: 5
 });
+
+function briefS3Err(err) {
+  return {
+    name: err?.name,
+    code: err?.code,
+    errno: err?.errno,
+    syscall: err?.syscall,
+    message: err?.message,
+    metadata: err?.$metadata
+  };
+}
+
+async function s3Send(cmd, label) {
+  try {
+    return await s3.send(cmd);
+  } catch (err) {
+    console.error(`S3 error during ${label}:`, briefS3Err(err));
+    throw err;
+  }
+}
+
+
 
 function sha256Hex(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
@@ -84,17 +123,18 @@ function guessExtFromMime(mime) {
 // This protects against rare cases where DB row exists but object was deleted or upload failed mid-way.
 async function ensureObjectExists({ storageKey, buffer, mimeType }) {
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: storageKey }));
+    await s3Send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: storageKey }), `HeadObject ${storageKey}`);
     return; // exists
   } catch (e) {
     // If missing (or any head failure), try to re-upload idempotently.
-    await s3.send(new PutObjectCommand({
+    await s3Send(new PutObjectCommand({ 
       Bucket: S3_BUCKET,
       Key: storageKey,
       Body: buffer,
       ContentType: mimeType,
       ACL: "private"
-    }));
+    }), `PutObject(reupload) ${storageKey}`);
+
   }
 }
 
@@ -128,13 +168,15 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
   }
 
   // Upload object first (idempotent because key is stable)
-  await s3.send(new PutObjectCommand({
+  await s3Send(new PutObjectCommand({ 
     Bucket: S3_BUCKET,
     Key: storageKey,
     Body: buffer,
     ContentType: mimeType,
     ACL: "private"
-  }));
+  }), `PutObject(dedup) ${storageKey}`);
+
+
 
   try {
     const info = db.prepare(`
@@ -187,13 +229,15 @@ async function insertImageNoDedup({ userId, buffer, mimeType, scope = "user" }) 
       ? `u/${userId}/out/${Date.now()}_${uniqueSuffix}.${ext}`
       : `g/out/${Date.now()}_${uniqueSuffix}.${ext}`;
 
-  await s3.send(new PutObjectCommand({
+  
+
+  await s3Send(new PutObjectCommand({
     Bucket: S3_BUCKET,
     Key: storageKey,
     Body: buffer,
     ContentType: mimeType,
     ACL: "private"
-  }));
+  }), `PutObject(output) ${storageKey}`);
 
   const info = db.prepare(`
     INSERT INTO images (scope, owner_user_id, sha256, byte_size, mime_type, storage_key)
@@ -509,6 +553,7 @@ function getGenerationCost(meta) {
   return CREDIT_COST_STANDARD;
 }
 
+///
 // Credit deduction primitive (This function assumes sufficiency)
 function deductCredits(userId, amount) {
   db.prepare(
@@ -517,6 +562,47 @@ function deductCredits(userId, amount) {
      WHERE id = ?`
   ).run(amount, userId);
 }
+
+/**
+ * Atomically reserve credits (deduct now) to prevent race conditions.
+ * If anything later fails, call refundCredits().
+ *
+ * This is done inside a DB transaction to:
+ *   1) self-heal expired credits
+ *   2) then deduct only if sufficient balance remains
+ */
+function reserveCredits(userId, amount) {
+  return db.transaction(() => {
+    // Ensure expiry is applied before we reserve
+    let user = getUserById(userId);
+    if (!user) return false;
+    user = expireCreditsIfNeeded(user);
+
+    const info = db.prepare(`
+      UPDATE users
+      SET credits = credits - ?
+      WHERE id = ?
+        AND credits >= ?
+    `).run(amount, userId, amount);
+
+    return info.changes === 1;
+  })();
+}
+
+function refundCredits(userId, amount) {
+  db.prepare(`
+    UPDATE users
+    SET credits = credits + ?
+    WHERE id = ?
+  `).run(amount, userId);
+}
+
+///
+
+
+
+
+
 
 function addDaysToNow(days) {
   const d = new Date();
@@ -1144,7 +1230,14 @@ app.post("/api/buy-credits", express.json(), (req, res) => {
 // Main route that receives meta, base_image, fabric files.
 // ============================================================================
 app.post("/api/generate", upload.any(), async (req, res) => {
+
+  // Track credit reservation so we can safely refund on any failure path
+  let creditsReserved = false;
+  let reservedCost = 0;
+
   try {
+
+
     // -----------------------------------------------------------------------
     // Parse metadata sent by the frontend
     // meta fields include:
@@ -1225,21 +1318,25 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     }
 
 
-    // ====================== CREDIT CHECK ===========================
+    // ====================== CREDIT RESERVATION (ATOMIC) ===========================
+    // Reserve (deduct) credits up-front to prevent race conditions.
+    // If anything fails later, we will refund.
 
-    // Determine credit cost for this generation
     const cost = getGenerationCost(meta);
 
-    // Get current credits (auto-expiry already handled)
-    const creditInfo = getUserCredits(req.userId);
-
-    if (!creditInfo || creditInfo.credits < cost) {
+    const reserved = reserveCredits(req.userId, cost);
+    if (!reserved) {
+      const creditInfo = getUserCredits(req.userId);
       return res.status(402).json({
         error: "insufficient_credits",
         credits: creditInfo ? creditInfo.credits : 0,
         needed: cost
       });
     }
+
+    creditsReserved = true;
+    reservedCost = cost;
+
 
 
 
@@ -1367,21 +1464,39 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       body: form
     });
 
+    
     if (!response.ok) {
       const errText = await response.text();
+
+      // Refund reserved credits because generation failed
+      if (creditsReserved) {
+        try { refundCredits(req.userId, reservedCost); } catch (e) {}
+        creditsReserved = false;
+      }
+
       return res.status(500).json({
         error: "OpenAI request failed",
         details: errText
       });
     }
 
+    
+
     const data = await response.json();
 
+
     if (!data.data || !data.data[0] || !data.data[0].b64_json) {
+      // Refund reserved credits because generation failed
+      if (creditsReserved) {
+        try { refundCredits(req.userId, reservedCost); } catch (e) {}
+        creditsReserved = false;
+      }
+
       return res.status(500).json({
         error: "No image returned from OpenAI"
       });
     }
+
 
     // ====================== STORE OUTPUT IMAGE (CLOUD + DEDUP) ===================
     // Output image buffer from OpenAI
@@ -1590,17 +1705,10 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
 
 
-
-      // ====================== CREDIT DEDUCTION ===========================
-
-      // Deduct credits only AFTER successful generation
-      deductCredits(req.userId, cost);
-
-      // Fetch updated credit state
-      const updatedCredits = getUserCredits(req.userId);
-
     } 
 
+    
+    
     setImmediate(async () => {
       try {
         await runPersistenceOnce();
@@ -1612,15 +1720,28 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         } catch (err2) {
           persistenceFailed = true;
           console.error("Persistence failed after retry:", err2);
+
+          // Refund reserved credits because persistence ultimately failed
+          if (creditsReserved) {
+            try { refundCredits(req.userId, reservedCost); } catch (e) {}
+            creditsReserved = false;
+          }
         }
       }
     });
+    
+
+
+
 
 
 
     setTimeout(() => {
-      if (persistenceFailed) {
-        console.warn("Persistence failed after image delivery (no credits deducted)");
+      if (persistenceFailed) {       
+        console.warn(
+          "Persistence failed after image delivery; credits were refunded",
+          { userId: req.userId, cost: reservedCost }
+        );
       }
     }, 0);
 
@@ -1630,13 +1751,23 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
   }
 
+  
   catch (err) {
+    // Refund reserved credits on any unexpected failure path
+    try {
+      if (req.userId && typeof creditsReserved !== "undefined" && creditsReserved) {
+        refundCredits(req.userId, reservedCost);
+        creditsReserved = false;
+      }
+    } catch (e) {}
+
     res.status(500).json({
       error: "Server error",
       details: err.message
     });
   }
 });
+
 
 
 
