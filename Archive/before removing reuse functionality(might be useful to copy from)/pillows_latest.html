@@ -29,7 +29,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>پیشنما — مبل (v3, commented)</title>
+<title>پیشنما — بالشتک ها</title>
 <style>
   /* =========================
    Theme variables
@@ -84,21 +84,33 @@
   .toggle button{border:0;background:transparent;color:#cbd5e1;padding:8px 12px}
   .toggle .active{background:#193a88;color:#fff}
 
-  /* Part grid “بخش مربوطه”: back/seat/arms/all */
-  .schem{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;align-items: center;}
-  .part{height:54px;border:1px solid var(--border);border-radius:10px;background:#0f1a33;display:grid;place-items:center}
-  .part.active{background:#0e3a2b;border-color:#0e3a2b}
-  /* Keep a visible border when the All Parts tag is selected */
-  .part[data-part="all"].active {
-    border-color: var(--border);   /* same color as unselected state */
-    border-width: 6px;             /* keep your thick border */
+  /* Mode selection */
+  .schem{
+    display:flex;
+    flex-direction:row;     
+    gap:8px;
+    margin-top:6px;
+    justify-content:space-between;
+    align-items:stretch;
   }
-  /* Make "All Parts" slightly wider with a thick border */
-  .part[data-part="all"] {
-    height: 68px;        /* instead of the default 54px */
-    padding-inline: 44px;   /* makes it visually wider */
-    border-width: 6px;      /* very thick border */
+  .part{
+    flex:1;
+    min-height:56px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:#0f1a33;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:10px;
+    text-align:center;
+    line-height:1.4;
   }
+  .part.active{
+    background:#0e3a2b;
+    border-color:#0e3a2b;
+  }
+
 
   .viewport{flex:1;display:flex;flex-direction:column;gap:10px;overflow:auto/*replaced*/}
   .section{display:none;flex:1;overflow:auto/*replaced*/}
@@ -113,6 +125,11 @@
 
   /* Fixed heights used in mobile-safe viewport */
   #sofaThumb, #baseFrame { height: 220px !important; width: 100%; }
+  #baseFrame img {
+  margin-left: auto;
+  margin-right: auto;
+}
+
   #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
   .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
 
@@ -122,6 +139,31 @@
   /* Toast */
   #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
   #toast.show{opacity:1}
+
+  .overlay{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    width:16px;
+    height:16px;
+    border-radius:4px;
+    border:1px solid var(--accent);
+    background-size:cover;
+    background-position:center;
+
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .overlay.dragEnabled.dragActive {
+    cursor: -webkit-grab;
+    cursor: grab;
+  }
+  .overlay.dragEnabled.dragActive:active {
+    cursor: -webkit-grabbing;
+    cursor: grabbing;
+  }
+
+
 
 </style>
 </head>
@@ -142,7 +184,6 @@
 
 
 
-
     <div id="userMenu" 
      style="position:absolute; top:50px; right:10px; 
             background:#0f1629; border:1px solid #3a4367; 
@@ -155,6 +196,8 @@
           خروج
       </button>
     </div>
+
+
 
     <div class="menu" id="menu">
       <a href="sofa">🛋️ طراحی مبل</a>
@@ -172,6 +215,7 @@
         ">
         🌗 تغییر حالت نمایش
       </button>
+
     </div>
   </div>
 
@@ -179,7 +223,7 @@
     <!-- ===== Stage 1: Upload base sofa image ===== -->
     <section id="step-upload" class="section active">
       <div class="card">
-        <h3 style="margin:0 0 8px">📷 آپلود تصویر مبل</h3>
+        <h3 style="margin:0 0 8px">📷 آپلود تصویر "مبل و بالشتک ها"</h3>
         <div class="thumb" id="sofaThumb">
           <!-- <span class="hint">هنوز تصویری انتخاب نشده</span> -->
         </div>
@@ -210,8 +254,17 @@
 
       <div class="card" id="frame">
         <!-- Stage 2 base sofa frame mirrors pillows layout -->
-        <div class="thumb" id="baseFrame" style="margin-bottom: 15px;">
+        <div class="thumb" id="baseFrame" style="margin-bottom: 15px;">          
           <img id="baseImg2" alt="">
+        </div>
+        <!-- Tagging controls (ONLY for tagged mode) -->
+        <div class="row" id="tagControls" style="display:none; justify-content:flex-start; gap:8px; margin-bottom:8px;">
+          <button class="btn" id="undoBtn" title="واگرد">↩</button>
+          <button class="btn" id="clearBtn" title="پاک‌سازی">🗑️</button>
+        </div>
+
+        <div class="thumb" id="tagFrame" style="display:none; position:relative; margin-bottom:15px;">
+          <img id="tagBaseImg" alt="">
         </div>
 
         <!-- Fabric selection frame with thumbnail + controls -->
@@ -232,27 +285,22 @@
           <!-- I commented this line and the related codes - I will probably delete it in the future (search fabPlaceholder to find related codes) -->
           <!-- <span id="fabPlaceholder" style="color:var(--muted);font-size:.9rem;display:block;">پارچه اول را انتخاب کنید</span> -->
           <div>
-            <div class="tagsHeader" style="margin-top:0">بخش مربوط به این پارچه</div>
+            <div class="tagsHeader" style="margin-top:0">حالت اعمال پارچه روی بالشتک ها</div>
             <div class="schem" id="schem">
-              <button class="part" data-part="all" style="color: #e2e8f0;">همه</button>
-              <button class="part" data-part="back" style="color: #e2e8f0;">پشتی</button>
-              <button class="part" data-part="seat" style="color: #e2e8f0;">نشیمن</button>
-              <button class="part" data-part="arms" style="color: #e2e8f0;">دسته‌ها</button>
-              
+              <button class="part" data-mode="single" style="color: #e2e8f0;">همه بالشتک‌ها با یک پارچه</button>
+              <button class="part" data-mode="tagged" style="color: #e2e8f0;">انتخاب بالشتک‌ها و پارچه‌های مختلف</button>
             </div>
           </div>
         </div>
-
         <!-- Add Fabric: HIDDEN when fabrics.length >= 3; otherwise enabled based on selection readiness -->
         <div class="controls">
           <div class="rightline" style="margin-top: 10px;">
             <button class="btn" id="addBtn">➕ افزودن پارچه دوم</button>
           </div>
         </div>
-
       </div>
 
-
+      
 
       <!-- Generate row: quality toggle + preview (integration point for the model) -->
       <div class="controls">
@@ -311,8 +359,7 @@
 
 /** ============================================================================
  * Typedefs (documentation only)
- * @typedef {{ id:number, url:string, file?:File, parts:Set<'back'|'seat'|'arms'> }} Fabric
- * @typedef {{ back:number|null, seat:number|null, arms:number|null }} Assigned
+ * @typedef {{ id:number, url:string, file?:File }} Fabric
  * ========================================================================== */
 
 /* ============================== Constants / DOM ============================ */
@@ -329,7 +376,7 @@ function updateLoginButton() {
 
     // Hard reset auth-dependent UI
     document.getElementById("credit-info").textContent = "";
-    
+
     const buyCreditsBtn = document.getElementById("buyCreditsBtn");
     const historyBtn = document.getElementById("historyBtn");
     const userMenu = document.getElementById("userMenu");
@@ -344,14 +391,13 @@ function updateLoginButton() {
 
 
 
-
     const btn = document.getElementById("loginBtn");
     if (!btn) return;
 
     const token = localStorage.getItem("pishnama_user_token");
     const identifier = localStorage.getItem("pishnama_user_identifier");
     
-    
+
     if (token) {
       if (creditInfo) creditInfo.style.display = "inline";
       if (buyCreditsBtn) buyCreditsBtn.style.display = "inline-block";
@@ -378,9 +424,11 @@ function updateLoginButton() {
     }
 
 
+
     if (!token && creditInfo) {
         creditInfo.textContent = "";
     }
+
 
 
 }
@@ -407,10 +455,6 @@ function forceLogoutIfInvalid(tokenResponse, authOptions = {}) {
 }
 
 
-
-
-
-
 async function fetchWithAuth(url, options = {}) {
   const token = localStorage.getItem("pishnama_user_token");
 
@@ -435,8 +479,6 @@ async function fetchWithAuth(url, options = {}) {
 
   return { res, data };
 }
-
-
 
 
 // Maps 1..3 to Persian ordinals: اول / دوم / سوم
@@ -468,26 +510,39 @@ const addBtn       = document.getElementById('addBtn');
 const nextBtn      = document.getElementById('nextBtn');
 const prevStep     = document.getElementById('prevStep');
 
-// Logical part names; used for visibility rules and assignments
-const parts = ['back','seat','arms'];
+const tagFrame = document.getElementById('tagFrame');
+const tagControls = document.getElementById('tagControls');
+const tagBaseImg = document.getElementById('tagBaseImg');
+const undoBtn = document.getElementById('undoBtn');
+const clearBtn = document.getElementById('clearBtn');
+
+
+
 
 /* ================================== State ================================= */
 
 // Global UI state (no persistence)
-let sofaChosen   = false; // becomes true after an image is picked
+let pillowsChosen   = false; // becomes true after an image is picked
 /** @type {Fabric[]} */
-let fabrics      = [];    // each item: { id, url, parts:Set<string> }
- /** @type {Assigned} */
-let assigned     = {back:null, seat:null, arms:null}; // which fabric id owns each part (or null)
+let fabrics      = [];    // each item: { id, url, file?:File }
 let idx          = 0;     // index of "current" fabric being edited
-let sofaBaseFile = null;  // keep original base sofa File for export
+let pillowsBaseFile = null;  // keep original base sofa File for export
+let draggingTag = null; // { el, pointerId }
+
 
 // NEW: Global quality setting (standard | high)
 let generationQuality = "high";
 
+// pillows mode selection:
+// - "single": one fabric for all pillows
+// - "tagged": per-pillow explicit assignment (future rounds)
+let modeSelection = "single";   // default selection
+
+
+
 let historyPage = 1;
 let historyTotal = 0;
-const HISTORY_PAGE_SIZE = 20;
+const HISTORY_PAGE_SIZE = 12;
 
 
 /* =============================== Helpers ================================== */
@@ -496,7 +551,6 @@ async function refreshCredits() {
   const token = localStorage.getItem("pishnama_user_token");
   if (!token) return;
 
-  
   let data;
   try {
     ({ data } = await fetchWithAuth("/api/credits", {
@@ -529,6 +583,8 @@ function loadImage(el, file){
 function waitForImage(img) {
   return new Promise(resolve => {
     if (!img) return resolve();
+    // ✅ IMPORTANT: if there's no src, onload/onerror will never fire → resolve immediately
+    if (!img.src) return resolve();
     if (img.complete && img.naturalWidth > 0) return resolve();
     img.onload = () => resolve();
     img.onerror = () => resolve();
@@ -594,23 +650,18 @@ async function loadHistory(reset = false) {
 
 
 
-
-
 // ======================= IMAGE COMPRESSION HELPERS =========================
 
-const MAX_BASE_BYTES   = 3 * 1024 * 1024;  // 3 MB threshold for sofa base image
+const MAX_BASE_BYTES   = 3 * 1024 * 1024;  // 3 MB threshold for sofa+pillows base image
 const MAX_FABRIC_BYTES = 3 * 1024 * 1024;  // 3 MB threshold for fabrics
-const BASE_MAX_SIDE    = 1536;             // max width/height for sofa image
-const FABRIC_MAX_SIDE  = 1024;             // max width/height for fabrics
+const BASE_MAX_SIDE    = 1536;
+const FABRIC_MAX_SIDE  = 1024;
 
 function ensureJpegName(name) {
   if (!name) return "image.jpg";
   return name.replace(/\.[^.]+$/,"") + ".jpg";
 }
 
-/**
- * Load a File into an HTMLImageElement using a Blob URL.
- */
 function loadFileToImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -627,14 +678,17 @@ function loadFileToImage(file) {
   });
 }
 
-/**
- * Compress & normalize an image *if needed*:
- *  - If JPEG and under maxBytes → returned as-is
- *  - Otherwise → resized to maxSide (inside) and encoded as JPEG,
- *    trying a few quality steps until under maxBytes (or quality floor).
- */
+function loadUrlToImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+
 async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
-  // No need to touch small JPEGs
   if (file.type === "image/jpeg" && file.size <= maxBytes) {
     return file;
   }
@@ -653,7 +707,6 @@ async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
   const ctx = canvas.getContext("2d");
   ctx.drawImage(img, 0, 0, targetW, targetH);
 
-  // Try a few qualities until we get under the threshold
   let quality = 0.85;
   let lastBlob = null;
 
@@ -670,13 +723,12 @@ async function compressImageIfNeeded(file, { maxBytes, maxSide }) {
     quality -= 0.1;
   }
 
-  // Fallback: return best attempt if we never got under maxBytes
   if (lastBlob) {
     return new File([lastBlob], ensureJpegName(file.name), { type: "image/jpeg" });
   }
-  // Ultimate fallback: original file
   return file;
 }
+
 
 
 /** Stage navigation (no side effects beyond DOM visibility) */
@@ -684,10 +736,10 @@ function gotoUpload(){
   stepFabrics.classList.remove('active');
   stepUpload.classList.add('active');
 
-  // re-render base image when returning to stage 1 (e.g. after restore)
-  if (sofaBaseFile && sofaThumb) {
+  // 🔧 FIX: restore base image preview when navigating back
+  if (pillowsBaseFile && sofaThumb) {
     sofaThumb.innerHTML = '<img>';
-    loadImage(sofaThumb.firstElementChild, sofaBaseFile);
+    loadImage(sofaThumb.firstElementChild, pillowsBaseFile);
 
     // allow going forward again after restore
     toFabricsBtn.disabled = false;
@@ -707,6 +759,7 @@ function gotoOutput() {
   stepFabrics.classList.remove("active");
   stepOutput.classList.add("active");
 }
+
 
 
 
@@ -734,57 +787,307 @@ function updateUI(){
   // Wizard badge: "پارچه X از N"
   // wizBadge.textContent = `پارچه ${idx+1} از ${fabrics.length}`;
 
-  // 2) Part grid visibility & active states
-  schem.querySelectorAll('.part').forEach(btn=>{
-    const p = btn.dataset.part;
-    if(p==='all'){
-      const allAvail = parts.every(pa => (assigned[pa]===null || assigned[pa]===cur.id));
-      btn.style.visibility = allAvail ? 'visible' : 'hidden';
-      btn.classList.toggle('active', cur.parts.size===3);
-    }else{
-      const visible = (assigned[p]===null || assigned[p]===cur.id);
-      btn.style.visibility = visible ? 'visible' : 'hidden';
-      btn.classList.toggle('active', cur.parts.has(p));
-    }
-  });
 
-  // 5) Generate is always enabled; validation happens on click now
-  previewBtn.disabled = false;
-
-  // 3) Add Fabric management
-  if(fabrics.length>=3){
-    addBtn.style.display='none';
-  }else{
-    addBtn.style.display='inline-block';
-    const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
-    addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
-
-    const allAssignedOverall = parts.every(p=>assigned[p]!==null);
-    const curAll = (cur.parts.size===3);
-    const currentReady = !!cur.url && cur.parts.size>0;
-    addBtn.disabled = allAssignedOverall || curAll || !currentReady;
+  // Hide or show the mode title based on stage
+  const modeTitle = document.querySelector('.tagsHeader');
+  if (modeTitle) {
+      modeTitle.style.display = (idx === 0 ? 'block' : 'none');
   }
 
-  // 4) Next button: always present; disabled if there is no next fabric
+  // 2) Mode buttons visibility & active state
+  if (schem) {
+    schem.querySelectorAll('.part').forEach(btn => {
+      if (idx === 0) {
+        btn.style.display = 'block';
+        const m = btn.dataset.mode;
+        btn.classList.toggle('active', modeSelection === m);
+      } else {
+        // On fabric #2 and #3, hide the mode buttons completely
+        btn.style.display = 'none';
+      }
+    });
+  }
+  
+  
+  // 
+  const baseFrame = document.getElementById('baseFrame');
+  if (modeSelection === "tagged") {
+    baseFrame.style.display = "none";
+    if (tagFrame) tagFrame.style.display = "block";
+    if (tagControls) tagControls.style.display = "flex";
+  } else {
+    baseFrame.style.display = "block";
+    if (tagFrame) tagFrame.style.display = "none";
+    if (tagControls) tagControls.style.display = "none";
+  }
+
+
+
+  // 3) Generate is always enabled; validation happens on click now
+  previewBtn.disabled = false;
+
+  // 4) Add Fabric management (depends on mode)
+  const multiAllowed = (modeSelection === 'tagged');
+  if (!multiAllowed) {
+    // In single mode (or before choosing a mode), hide the Add button
+    addBtn.style.display = 'none';
+  } else {
+    if (fabrics.length >= 3) {
+      addBtn.style.display = 'none';
+    } else {
+      addBtn.style.display = 'inline-block';
+      const nextOrdinal = faOrdinal(Math.min(fabrics.length+1,3));
+      addBtn.textContent = `➕ افزودن پارچه ${nextOrdinal}`;
+
+      // a fabric and at least one tag is needed
+      const currentReady = !!cur.url && Array.isArray(cur.tags) && cur.tags.length > 0;
+      addBtn.disabled = !currentReady;
+    }
+  }
+
+  // 5) Next button: always present; disabled if there is no next fabric
   nextBtn.style.display='inline-block';
   
-
   // Can move to next fabric only if:
   // 1) there IS a next fabric
-  // 2) current fabric has an image AND at least one sofa part selected
+  // 2) current fabric is semantically ready
   let canAdvance = false;
 
-  if (idx < fabrics.length - 1) {    
-    canAdvance = !!cur.url && !!cur.parts && cur.parts.size > 0;
+  if (idx < fabrics.length - 1) {
+    if (modeSelection === "single") {
+      canAdvance = !!cur.url;
+    } else {
+      canAdvance =
+        !!cur.url &&
+        Array.isArray(cur.tags) &&
+        cur.tags.length > 0;
+    }
   }
 
   nextBtn.disabled = !canAdvance;
 
 
-
-
+  updateOverlayCursor();
 
 }
+
+
+// tagging interaction
+function handleTagFrameClick(e){
+  if (modeSelection !== "tagged") return;
+  if (!fabrics[idx] || !fabrics[idx].url) return;
+
+  const frame = document.getElementById("tagFrame");
+  const rect = frame.getBoundingClientRect();
+
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+
+  const tag = { id: Date.now(), x, y };
+  fabrics[idx].tags.push(tag);
+
+  renderTags();
+  updateUI();
+} 
+
+function updateOverlayCursor(){
+  const nodes = tagFrame.querySelectorAll(".overlay");
+  nodes.forEach(d => {
+    const own = Number(d.dataset.owner);
+    if (own === idx && d.classList.contains("dragEnabled")) {
+      d.classList.add("dragActive");
+    } else {
+      d.classList.remove("dragActive");
+    }
+  });
+}
+
+
+function renderTags(){
+  const frame = document.getElementById("tagFrame");
+  if (!frame) return;
+
+  frame.querySelectorAll(".overlay").forEach(n => n.remove());
+
+  fabrics.forEach((f, fi) => {
+    if (!f.tags || !f.url) return;
+
+    f.tags.forEach((t, ti) => {
+      const d = document.createElement("div");
+      d.className = "overlay";
+      d.style.left = (t.x * 100) + "%";
+      d.style.top  = (t.y * 100) + "%";
+      d.style.backgroundImage = `url(${f.url})`;
+      d.dataset.owner = fi;
+      d.dataset.ti = ti;
+      d.style.touchAction = "none";
+      d.addEventListener("contextmenu", e => e.preventDefault());
+
+
+      // ===== DRAG START =====
+      d.addEventListener("pointerdown", (ev) => {
+        if (Number(d.dataset.owner) !== idx) return;
+        ev.stopPropagation();
+        d.setPointerCapture(ev.pointerId);
+        draggingTag = { el: d, pointerId: ev.pointerId };
+      });
+
+      // ===== DRAG MOVE =====
+      d.addEventListener("pointermove", (ev) => {
+        if (!draggingTag || draggingTag.el !== d) return;
+
+        const r = frame.getBoundingClientRect();
+        let nx = (ev.clientX - r.left) / r.width;
+        let ny = (ev.clientY - r.top)  / r.height;
+
+        nx = Math.max(0, Math.min(1, nx));
+        ny = Math.max(0, Math.min(1, ny));
+
+        d.style.left = (nx * 100) + "%";
+        d.style.top  = (ny * 100) + "%";
+
+        const owner = Number(d.dataset.owner);
+        const ti = Number(d.dataset.ti);
+        if (fabrics[owner] && fabrics[owner].tags[ti]) {
+          fabrics[owner].tags[ti].x = nx;
+          fabrics[owner].tags[ti].y = ny;
+        }
+      });
+
+      // ===== DRAG END =====
+      d.addEventListener("pointerup", (ev) => {
+        if (!draggingTag || draggingTag.el !== d) return;
+        d.releasePointerCapture(ev.pointerId);
+        draggingTag = null;
+      });
+      // Enable grab cursor only after the user actually moves the pointer
+      (function(){
+        let startX = null, startY = null;
+        const enableAfterMove = (ev) => {
+          if (startX === null) {
+            startX = ev.clientX;
+            startY = ev.clientY;
+            return;
+          }
+          if (Math.abs(ev.clientX - startX) > 5 || Math.abs(ev.clientY - startY) > 5) {
+            d.classList.add("dragEnabled");
+            if (Number(d.dataset.owner) === idx) {
+              d.classList.add("dragActive");
+            }
+            document.removeEventListener("pointermove", enableAfterMove);
+          }
+        };
+        document.addEventListener("pointermove", enableAfterMove);
+      })();
+
+
+
+      // Prevent click-through
+      d.addEventListener("click", ev => ev.stopPropagation());
+
+      frame.appendChild(d);
+    });
+  });
+
+  updateOverlayCursor();
+}
+
+
+
+
+async function makeAnnotatedBaseImageBlob() {
+  if (!baseImg2 || !pillowsBaseFile) return null;
+
+  const img = await loadFileToImage(pillowsBaseFile);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const frameRect = tagFrame.getBoundingClientRect();
+  const sx = canvas.width / frameRect.width;
+  const sy = canvas.height / frameRect.height;
+
+  // Build a cache
+  const fabricImgCache = new Map();
+  for (const f of fabrics) {
+    if (f.url) {
+      try {
+        fabricImgCache.set(f.url, await loadUrlToImage(f.url));
+      } catch {}
+    }
+  }
+
+
+  
+  // draw each tag as a colored + named marker (F1/F2/F3), like server_____2.js
+  const COLORS = { F1: "#ff3b30", F2: "#34c759", F3: "#0a84ff" };
+
+  fabrics.forEach((f, fi) => {
+    if (!f.tags || !f.tags.length) return;
+
+    const label = `F${fi + 1}`;
+    const fill = COLORS[label] || "#ffffff";
+
+    f.tags.forEach(t => {
+      const cx = t.x * frameRect.width * sx;
+      const cy = t.y * frameRect.height * sy;
+
+      // Radius scaled similarly to the demo (but in your canvas coordinate system)
+      const r = Math.max(10, canvas.width * 0.018);
+
+      // Filled circle
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.globalAlpha = 0.92;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Subtle border
+      ctx.lineWidth = Math.max(2, canvas.width * 0.002);
+      ctx.strokeStyle = "rgba(0,0,0,.25)";
+      ctx.stroke();
+
+      // White label text (F1/F2/F3)
+      ctx.fillStyle = "#fff";
+      ctx.font = `${Math.floor(r * 0.9)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, cx, cy);
+
+      ctx.restore();
+    });
+  });
+
+
+
+
+
+
+  return await new Promise(res =>
+    canvas.toBlob(res, "image/png", 0.92)
+  );
+}
+
+
+// handlers
+function handleUndoTag(){
+  if (!fabrics[idx] || fabrics[idx].tags.length === 0) return;
+  fabrics[idx].tags.pop();
+  renderTags();
+}
+function handleClearTags(){
+  if (!fabrics[idx]) return;
+  fabrics[idx].tags = [];
+  renderTags();
+}
+
+
 
 /* ===================== Validation (pre-generation) ======================== */
 
@@ -792,145 +1095,38 @@ function validateBeforeGenerateSofa(){
   const errors = [];
   const warnings = [];
 
-  // --- Mandatory checks ---
-  if(!sofaChosen){
-    errors.push("\n- تصویر پایهٔ مبل انتخاب نشده است.");
+  // Base image is required
+  if(!pillowsChosen){
+    errors.push("\n- تصویر پایهٔ مبل و بالشتک ها انتخاب نشده است.");
   }
-  const fabricsWithImg = fabrics.filter(f=>!!f.url);
-  if(fabricsWithImg.length===0){
+
+  const fabricsWithImg = fabrics.filter(f => !!f.url);
+
+  if(fabricsWithImg.length === 0){
     errors.push("\n- حداقل یک تصویر پارچه باید آپلود شود.");
   }
-  const anyTaggedOnImg = fabrics.some(f=> !!f.url && f.parts && f.parts.size>0 );
-  if(!anyTaggedOnImg){
-    errors.push("\n- حداقل یک برچسب بخش (پشتی/نشیمن/دسته‌ها) باید به یکی از پارچه‌های آپلود شده اختصاص داده شود.");
+
+  if(!modeSelection){
+    errors.push("\n- باید یکی از دو حالت «همه بالشتک‌ها با یک پارچه» یا «انتخاب بالشتک‌ها و پارچه‌های مختلف» را انتخاب کنید.");
   }
 
-  // --- Optional checks ---
-  // A) Fabric images without any assigned parts
-  const imgNoTags = fabrics
-    .map((f,i)=>({f,i}))
-    .filter(({f})=> !!f.url && (!f.parts || f.parts.size===0))
-    .map(({i})=> `پارچه ${faOrdinal(i+1)}`);
-  if(imgNoTags.length>0){
-    warnings.push("\n- برای برخی پارچه‌ها بخشی تعیین نشده است: " + imgNoTags.join("، "));
+  if(modeSelection === 'single' && fabricsWithImg.length > 1){
+    warnings.push("\n- در حالت «همهٔ بالشتک ها با یک پارچه» فقط پارچهٔ اول استفاده می‌شود؛ بقیه نادیده گرفته خواهند شد.");
   }
-
-  // B) Parts selected for a fabric slot that has NO image yet (tags without fabric image)
-  const partsFa = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
-  const tagsNoImg = fabrics
-    .map((f,i)=>({f,i}))
-    .filter(({f})=> !f.url && f.parts && f.parts.size>0)
-    .map(({f,i})=> `${[...f.parts].map(p=>partsFa[p]).join("، ")} ⇐ پارچه ${faOrdinal(i+1)}`);
-  if(tagsNoImg.length>0){
-    warnings.push("\n- بخش های انتخاب شده که پارچه‌ای برایشان انتخاب نشده:\n " + tagsNoImg.join(" | "));
-  }
-
-  // C) Not all sofa parts (seat, back, arms) are assigned across fabrics
-  (function(){
-    const required = ["back","seat","arms"];
-    const seen = new Set();
-    fabrics.forEach(f=>{
-      if(f && f.url && f.parts && f.parts.size>0){
-        [...f.parts].forEach(p=>seen.add(p));
-      }
-    });
-    const missing = required.filter(p=>!seen.has(p));
-    if(missing.length>0){
-      const partsFa2 = {back:"پشتی", seat:"نشیمن", arms:"دسته‌ها"};
-      warnings.push("\n- برای برخی بخش‌های مبل پارچه جدید انتخاب نشده است: " + missing.map(m=>partsFa2[m]).join("، "));
+  
+  if (modeSelection === "tagged") {
+    const valid = fabrics.some(f => f.file && f.tags && f.tags.length > 0);
+    if (!valid) {
+      errors.push("\n- باید حداقل یک پارچه و حداقل یک بالشتک انتخاب‌ شده باشد.");
     }
-  })();
+  }
+
+
+
 
   return {errors, warnings};
 }
 
-/* ========================== Export / ZIP Helpers ========================== */
-
-function tsNow(){
-  const p = new Date();
-  const z = n=>String(n).padStart(2,'0');
-  return `${p.getFullYear()}-${z(p.getMonth()+1)}-${z(p.getDate())}_${z(p.getHours())}-${z(p.getMinutes())}-${z(p.getSeconds())}`;
-}
-function ext(name){
-  const i = name.lastIndexOf('.'); return i>=0 ? name.slice(i) : '.png';
-}
-function downloadBlob(blob, filename){
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=filename;
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
-}
-
-/** Build meta/files overview WITHOUT side effects (pure builder) */
-function buildSofaMetaAndFiles(){
-  // use global quality (no longer read from DOM)
-  const quality = generationQuality;
-
-
-  const included = [];
-  const excluded = [];
-  fabrics.forEach((f,fi)=>{
-    const id = `fabric_${String(fi+1).padStart(2,'0')}`;
-    const hasFile = !!f.file;
-    const partsList = f.parts ? Array.from(f.parts) : [];
-    if(hasFile && partsList.length>0){
-      included.push({ id, parts: partsList, file: f.file });
-    }else{
-      const reason = !hasFile ? 'no image' : 'no parts';
-      excluded.push({ id, reason });
-    }
-  });
-
-  // Determine mode_selection for sofa:
-  // "all"  → if ANY fabric covers all three parts
-  // "partial" → otherwise
-  let modeSelectionSofa = "partial";
-  for (const f of fabrics) {
-    if (f.parts && f.parts.size === 3) {
-      modeSelectionSofa = "all";
-      break;
-    }
-  }
-
-  const meta = {
-    mode: 'sofa',
-    mode_selection: modeSelectionSofa,   // <-- NEW
-    quality,
-    fabrics: included.map(x=>({id:x.id, parts:x.parts})),
-    excluded,
-    files: {
-      base_image: sofaBaseFile ? 'base_image'+ext(sofaBaseFile.name) : null,
-      fabrics: included.map(x=> x.id + ext(x.file.name))
-    }
-  };
-
-
-
-  const lines = [];
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
-  lines.push('=== HEADER ===');
-  lines.push('mode: sofa');
-  lines.push(`timestamp: ${new Date().toLocaleString()} (${tz})`);
-  lines.push(`quality: ${quality}`);
-  lines.push('');
-  lines.push('=== INCLUDED FABRICS ===');
-  if(included.length===0){ lines.push('(none)'); }
-  included.forEach(x=>{
-    lines.push(`- ${x.id}: file="${x.id+ext(x.file.name)}"`);
-    lines.push(`  sofa.parts: [${x.parts.join(', ')}]`);
-  });
-  lines.push('');
-  lines.push('=== EXCLUSIONS (NOT SENT) ===');
-  if(excluded.length===0){ lines.push('(none)'); }
-  excluded.forEach(x=> lines.push(`- ${x.id}: reason=${x.reason}`));
-  lines.push('');
-  lines.push('=== FILES IN THIS EXPORT ===');
-  if(sofaBaseFile) lines.push(`- ${'base_image'+ext(sofaBaseFile.name)}`);
-  included.forEach(x=> lines.push(`- ${x.id+ext(x.file.name)}`));
-
-  return {meta, included, metaTxt: lines.join('\n'), quality};
-}
 
 /* ========================== Toast (UI affordance) ========================= */
 
@@ -965,10 +1161,11 @@ function handleAddBtnClick(){
   // Start fresh: clear file inputs so the next pick always fires 'change'
   try{ const _f=document.getElementById('fabFile'); if(_f) _f.value=''; }catch(e){}
   try{ const _c=document.getElementById('fabCam');  if(_c) _c.value=''; }catch(e){}
-  fabrics.push({id:fabrics.length, url:'', parts:new Set()});
+  fabrics.push({id:fabrics.length, url:'', file: undefined, tags: []});
   idx = fabrics.length-1;
   updateUI();
 }
+
 
 
 // Stage 1: selecting the base sofa image enables Continue after load
@@ -976,14 +1173,13 @@ async function handleSofaFileChange(e){
   const originalFile = e.target.files?.[0];
   if (!originalFile) return;
 
-  // Compress / normalize if needed
   const file = await compressImageIfNeeded(originalFile, {
     maxBytes: MAX_BASE_BYTES,
     maxSide: BASE_MAX_SIDE
   });
 
-  sofaChosen   = true;
-  sofaBaseFile = file;
+  pillowsChosen   = true;
+  pillowsBaseFile = file;
 
   toFabricsBtn.disabled = false;
   sofaThumb.innerHTML = '<img>';
@@ -993,8 +1189,7 @@ async function handleSofaFileChange(e){
   }
 
   if (fabrics.length === 0) {
-    fabrics.push({ id: 0, url: "", parts: new Set(["back", "seat", "arms"]) });
-    assigned = { back: 0, seat: 0, arms: 0 };
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
   }
   idx = 0;
 }
@@ -1005,13 +1200,12 @@ function handleSofaCamChange(){
   sofaFile.dispatchEvent(new Event('change'));
 }
 function handleToFabricsClick(){
-  if(!sofaChosen) return;
+  if(!pillowsChosen) return;
   gotoFabrics();
 }
 
 // Fabric image selection for current fabric idx
 async function setFabricFromFile(file){
-  // Compress / normalize if needed
   const processed = await compressImageIfNeeded(file, {
     maxBytes: MAX_FABRIC_BYTES,
     maxSide: FABRIC_MAX_SIDE
@@ -1026,9 +1220,10 @@ async function setFabricFromFile(file){
   fabrics[idx].url  = url;
   fabrics[idx].file = processed;
   fabImg.src = url;
-
+  renderTags();
   updateUI();
 }
+
 
 
 async function handleFabFileChange(e){
@@ -1048,6 +1243,8 @@ async function handleFabCamChange(e){
 }
 
 
+
+
 // Quality toggle: (high/standard) 
 function handleQToggleClick(e){
   const b = e.target.closest('button');
@@ -1063,40 +1260,35 @@ function handleQToggleClick(e){
 
 // Part assignment rules (see original comments)
 function handleSchemClick(e){
-  const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
-  const p=btn.dataset.part;
-  const cur=fabrics[idx];
+  const btn = e.target.closest('.part');
+  if (!btn) return;
 
-  if(p==='all'){
-    const allAvail=parts.every(pa=>(assigned[pa]===null||assigned[pa]===cur.id));
-    if(!allAvail) return;
-    const turnOn=(cur.parts.size!==3);
-    parts.forEach(pa=>{
-      if(turnOn){ cur.parts.add(pa); assigned[pa]=cur.id; }
-      else{ cur.parts.delete(pa); if(assigned[pa]===cur.id) assigned[pa]=null; }
-    });
-  }else{
+  const m = btn.dataset.mode;
+  if (!m) return;
 
-    // If user clicks an individual part while "all" is active:
-    // we must turn off "all" and activate only that specific part.
-    if (cur.parts.size === 3 && p !== "all") {
-      parts.forEach(pa => cur.parts.delete(pa)); // clear all
-      cur.parts.add(p);                          // activate selected one
-      // update assigned:
-      parts.forEach(pa => { if (assigned[pa] === cur.id) assigned[pa] = null; });
-      assigned[p] = cur.id;
-      updateUI();
-      return;
+  // Mode selection is allowed only on the first fabric
+  if (idx !== 0) return;
+
+  if (m === "single") {
+    modeSelection = "single";
+  } else if (m === "tagged") {
+    // Entering tagged mode (one-time setup)
+    if (modeSelection !== "tagged") {
+      modeSelection = "tagged";
+
+      if (tagBaseImg && pillowsBaseFile) {
+        const u = URL.createObjectURL(pillowsBaseFile);
+        tagBaseImg.src = u;
+        tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+      }
     }
-
-
-    const visible=(assigned[p]===null||assigned[p]===cur.id);
-    if(!visible) return;
-    if(cur.parts.has(p)){ cur.parts.delete(p); if(assigned[p]===cur.id) assigned[p]=null; }
-    else { cur.parts.add(p); assigned[p]=cur.id; }
   }
+
+
   updateUI();
 }
+
+
 
 // Validation + ZIP build + download
 async function handlePreviewClick(){
@@ -1128,6 +1320,8 @@ async function handlePreviewClick(){
     return;
   }
 
+
+
   const {errors, warnings} = validateBeforeGenerateSofa();
   if(errors.length>0){
     alert("خطاهای ضروری: " + errors.join(" "));
@@ -1139,34 +1333,95 @@ async function handlePreviewClick(){
   }
 
 
+  ////
+  let meta;
+  let included = [];
 
-  const {meta, included} = buildSofaMetaAndFiles();
+  if (modeSelection === "single") {
+    // EXISTING BEHAVIOR — unchanged
+    meta = {
+      mode: "pillows",
+      mode_selection: "single",
+      quality: generationQuality,
+      fabrics: [{ id: "fabric_01" }]
+    };
 
-  try {
-    enterRestoreLoading();
-    const imageBase64 = await sendToBackend(meta, included, sofaBaseFile);
-    if (!imageBase64) return;
+    included = fabrics
+      .filter(f => !!f.file)
+      .slice(0, 1)
+      .map((f, i) => ({
+        id: `fabric_${String(i + 1).padStart(2, "0")}`,
+        file: f.file
+      }));
 
-    outputImg.src = "data:image/png;base64," + imageBase64;
-    gotoOutput();
-    await waitForImage(outputImg);
-    refreshCredits();
+    try {
+      enterRestoreLoading();
+      const imageBase64 = await sendToBackend(meta, included, pillowsBaseFile);
+      if (!imageBase64) return;      
 
+      outputImg.src = "data:image/png;base64," + imageBase64;
+      gotoOutput();
+      await waitForImage(outputImg);
+      refreshCredits();
 
-
-  } catch (err) {
-    console.error(err);
-    // Do NOT show "خطا..." if the user was logged out automatically
-    if (err.message === "Unauthorized") {
-        // Already handled by forceLogoutIfInvalid()
-        return;
+    } finally {
+      exitRestoreLoading();
     }
-    showToast("❌ خطا در تولید تصویر. لطفاً دوباره تلاش کنید.");
-  } finally {
-    exitRestoreLoading();
+
+  } else if (modeSelection === "tagged") {
+    // NEW BEHAVIOR — annotated base image only
+    const annotatedBlob = await makeAnnotatedBaseImageBlob();
+    if (!annotatedBlob) {
+      alert("خطا در تولید تصویر نشانه‌گذاری‌شده.");
+      return;
+    }
+
+    meta = {
+      mode: "pillows",
+      mode_selection: "tagged",
+      quality: generationQuality,
+      fabrics: fabrics
+        .filter(f => f.file && f.tags && f.tags.length > 0)
+        .map((f, i) => ({
+          id: `fabric_${String(i + 1).padStart(2, "0")}`,
+          tag_count: f.tags.length
+        }))
+    };
+
+    included = fabrics
+      .filter(f => f.file && f.tags && f.tags.length > 0)
+      .map((f, i) => ({
+        id: `fabric_${String(i + 1).padStart(2, "0")}`,
+        file: f.file
+      }));
+
+    const annotatedFile = new File(
+      [annotatedBlob],
+      "base_image_annotated.png",
+      { type: "image/png" }
+    );
+
+    try {
+      enterRestoreLoading();
+
+      //temporary
+      // window.open(URL.createObjectURL(annotatedBlob));
+
+      const imageBase64 = await sendToBackend(meta, included, annotatedFile);
+      if (!imageBase64) return;
+      outputImg.src = "data:image/png;base64," + imageBase64;
+      gotoOutput();
+      await waitForImage(outputImg);
+      refreshCredits();
+
+    } finally {
+      exitRestoreLoading();
+    }
   }
+  ////
 
 
+  
 
 }
 
@@ -1178,31 +1433,28 @@ function handleRemoveFabricClick(){
 
   if(!fabrics[idx]) return;
   const removedIndex = idx;
-  const removedId = fabrics[idx].id;
 
   // Revoke object URL to free memory
   try{ if(fabrics[idx].url) URL.revokeObjectURL(fabrics[idx].url); }catch(e){}
- // Clear assignments owned by this fabric
-  parts.forEach(p=>{ if(assigned[p]===removedId) assigned[p]=null; });
 
   // Remove fabric slot
   fabrics.splice(idx,1);
 
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'', parts:new Set()});
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
     idx=0;
   }else{
     // Reindex ids
     fabrics.forEach((f,ii)=>{ f.id=ii; });
-    // Shift assigned indices above removedId
-    parts.forEach(p=>{ if(assigned[p]!=null && assigned[p]>removedId) assigned[p]=assigned[p]-1; });
     // Select the next fabric after removed (or clamp)
     idx = Math.min(removedIndex, fabrics.length-1);
   }
 
-  showToast("پارچه حذف شد — برچسب‌های مرتبط پاک شدند.");
+  showToast("پارچه حذف شد.");
+  renderTags();
   updateUI();
 }
+
 
 // ====== NEW: Backend integration & loading state ======
 async function sendToBackend(meta, included, baseFile) {
@@ -1235,7 +1487,6 @@ async function sendToBackend(meta, included, baseFile) {
       `نیاز: ${data.needed}`
     );
     return null;
-
   }
 
   if (data?.persistence_failed) {
@@ -1244,7 +1495,7 @@ async function sendToBackend(meta, included, baseFile) {
 
   return data.image_base64;
 
-
+  
 
 }
 
@@ -1270,8 +1521,6 @@ function exitRestoreLoading() {
   const o = document.getElementById("restoreOverlay");
   if (o) o.style.display = "none";
 }
-
-
 
 
 /* ============================== Event Bindings ============================ */
@@ -1320,6 +1569,10 @@ document.getElementById("shareBtn")?.addEventListener("click", async () => {
 });
 
 
+//tagging related
+document.getElementById("tagFrame")?.addEventListener("click", handleTagFrameClick);
+document.getElementById("undoBtn")?.addEventListener("click", handleUndoTag);
+document.getElementById("clearBtn")?.addEventListener("click", handleClearTags);
 
 
 // Remove fabric (IIFE in original → direct binding here)
@@ -1334,8 +1587,7 @@ document.getElementById("shareBtn")?.addEventListener("click", async () => {
 // Ensure we start with an empty fabric slot if needed
 (function init(){
   if(fabrics.length===0){
-    fabrics.push({id:0,url:'', parts:new Set(['back','seat','arms'])});
-    assigned = {back:0, seat:0, arms:0};
+    fabrics.push({ id: 0, url: "", file: undefined, tags: [] });
     idx=0;
   }
   // Do not call updateUI() here to avoid any visual flicker before user input.
@@ -1422,10 +1674,15 @@ refreshCredits();
 
     <div id="creationPreviewMeta"
          style="margin-top:12px; font-size:13px; color:#cbd5e1;"></div>
+
+    <div id="creationPreviewFabrics"
+         style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+
+    <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px;">
+      <button class="btn" id="reuseCreationBtn">♻️ استفاده مجدد</button>
+    </div>
   </div>
 </div>
-
-
 
 
 
@@ -1440,10 +1697,8 @@ const closeLoginModal = document.getElementById("closeLoginModal");
 const sendCodeBtn = document.getElementById("sendCodeBtn");
 const verifyCodeBtn = document.getElementById("verifyCodeBtn");
 
-
 const userMenu = document.getElementById("userMenu");
 const logoutBtn = document.getElementById("logoutBtn");
-
 
 const buyCreditsBtn = document.getElementById("buyCreditsBtn");
 const buyCreditsModal = document.getElementById("buyCreditsModal");
@@ -1453,9 +1708,12 @@ const creationPreviewModal = document.getElementById("creationPreviewModal");
 const creationPreviewCloseBtn = document.getElementById("creationPreviewCloseBtn");
 const creationPreviewImage = document.getElementById("creationPreviewImage");
 const creationPreviewMeta = document.getElementById("creationPreviewMeta");
+const creationPreviewFabrics = document.getElementById("creationPreviewFabrics");
+const reuseCreationBtn = document.getElementById("reuseCreationBtn");
 
 let lastPreviewedCreation = null;
 let previewRequestId = 0;
+
 
 
 // Wire buttons & modal behavior (history)
@@ -1504,6 +1762,10 @@ document.addEventListener("click", (e) => {
 
 
 
+
+
+
+
 async function openCreationPreview(creationId) {
   const token = localStorage.getItem("pishnama_user_token");
   if (!token) return;
@@ -1524,10 +1786,19 @@ async function openCreationPreview(creationId) {
 
   creationPreviewImage.src = data.output_image_url;
 
-
   creationPreviewMeta.textContent =
     `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +
     new Date(data.created_at).toLocaleDateString("fa-IR");
+
+  creationPreviewFabrics.innerHTML = "";
+  for (const f of data.fabrics) {
+    const img = document.createElement("img");
+    img.src = f.image_url;
+    img.style.width = "80px";
+    img.style.borderRadius = "6px";
+    img.title = f.role;
+    creationPreviewFabrics.appendChild(img);
+  }
 
   creationPreviewModal.style.display = "block";
 }
@@ -1542,6 +1813,60 @@ creationPreviewModal.addEventListener("click", (e) => {
   }
 });
 
+reuseCreationBtn.onclick = async () => {
+  // ALWAYS close history when reusing a creation
+  if (historyModal) {
+    historyModal.style.display = "none";
+  }
+
+  if (!lastPreviewedCreation) return;
+
+  const c = lastPreviewedCreation;
+
+  // Always restore quality toggle locally (safe)
+  generationQuality = (c.quality === "standard") ? "standard" : "high";
+  if (qToggle) {
+    [...qToggle.children].forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.q === generationQuality);
+    });
+  }
+
+  // IMPORTANT: define what THIS page is
+  const THIS_PAGE_MODE = "pillows";
+
+  // If creation belongs to another mode, jump to the correct page and restore there
+  if (c.mode && c.mode !== THIS_PAGE_MODE) {
+    localStorage.setItem("pishnama_restore_creation_id", String(c.id));
+    localStorage.setItem("pishnama_restore_target_mode", c.mode);
+
+    // Close modal before navigation
+    creationPreviewModal.style.display = "none";
+
+    // Navigate
+    if (c.mode === "sofa") {
+      window.location.href = "sofa";
+    } else if (c.mode === "pillows") {
+      window.location.href = "pillows";
+    } else {
+      // Unknown future mode (carpet/curtain/...) — don’t crash
+      alert("این نوع تولید هنوز در این صفحه پشتیبانی نمی‌شود.");
+    }
+    return;
+  }
+
+  
+  // Same-mode restore (this page = pillows)
+  try {
+    await restorePillowsFromCreation(c);
+  } catch (e) {
+    console.error("Restore failed:", e);
+    alert("بازگردانی با خطا مواجه شد.");
+  }
+  creationPreviewModal.style.display = "none";
+
+
+};
+
 
 async function fetchUrlAsFile(url, filename) {
   const res = await fetch(url);
@@ -1550,16 +1875,15 @@ async function fetchUrlAsFile(url, filename) {
   return new File([blob], filename, { type: blob.type || "image/jpeg" });
 }
 
-async function restoreSofaFromCreation(c) {
-
+async function restorePillowsFromCreation(c) {
   enterRestoreLoading();
   try{
-
     // HARD RESET before restore
     fabrics = [];
     idx = 0;
-    sofaChosen = false;
-    sofaBaseFile = null;
+    modeSelection = "single";
+    pillowsChosen = false;
+    pillowsBaseFile = null;
 
     // 🔒 IMMEDIATE UI CLEAR
     fabImg.src = "";
@@ -1570,99 +1894,87 @@ async function restoreSofaFromCreation(c) {
     prevStep.disabled = true;
     addBtn.disabled = true;
 
-    // Must have base image
-    if (!c.base_image_url) {
-      alert("این تولید قدیمی است و تصویر پایه ذخیره نشده است.");
-      return;
-    }
-
-    // 1) Go to fabrics step UI (removed)
     
 
-    // 2) Restore base image preview + file
-    const baseFile = await fetchUrlAsFile(c.base_image_url, "base.jpg");
+    // 1) Restore base image preview + file
+    
+    let restoreBaseUrl = null;
 
-    sofaBaseFile = baseFile;          // your existing variable in sofa workflow
-    sofaChosen = true;                // your existing state
-    sofaThumb.innerHTML = '<img>';
-    loadImage(sofaThumb.firstElementChild, baseFile); // stage 1 preview
-    loadImage(baseImg2, baseFile);    // stage 2 preview
-
-        // 3+4) Rebuild fabrics + restore parts using ROLE/ID mapping (NOT index-based)
-    // This prevents c.fabrics[] and c.meta.fabrics[] ordering mismatches.
-
-    // Build: role -> File
-    const filesByRole = {};
-    for (let i = 0; i < (c.fabrics || []).length; i++) {
-      const f = c.fabrics[i];
-      if (!f || !f.image_url) continue;
-
-      const role =
-        (typeof f.role === "string" && f.role) ||
-        `fabric_${String(i + 1).padStart(2, "0")}`;
-
-      filesByRole[role] = await fetchUrlAsFile(f.image_url, `${role}.jpg`);
-    }
-
-    // Build: role/id -> parts[]
-    const partsByRole = {};
-    if (c.meta && Array.isArray(c.meta.fabrics)) {
-      for (const mf of c.meta.fabrics) {
-        if (!mf || typeof mf.id !== "string") continue;
-        if (!Array.isArray(mf.parts)) continue;
-        partsByRole[mf.id] = mf.parts.slice();
+    // Decide restore source based on mode
+    if (c.mode_selection === "tagged") {
+      if (!c.base_image_raw_url) {
+        alert("این تولید قابلیت بازگردانی ندارد (تصویر پایهٔ اصلی ذخیره نشده است).");
+        return;
       }
+      restoreBaseUrl = c.base_image_raw_url;
+    } else {
+      if (!c.base_image_url) {
+        alert("این تولید تصویر پایه ندارد.");
+        return;
+      }
+      restoreBaseUrl = c.base_image_url;
     }
 
-    // Decide roles in stable order (01,02,03), include only ones we actually have an image for
-    const ORDER = ["fabric_01", "fabric_02", "fabric_03"];
-    const rolesToUse = ORDER.filter(r => !!filesByRole[r]);
+    // Restore base image file
+    const baseFile = await fetchUrlAsFile(restoreBaseUrl, "base.jpg");
 
-    // Fallback: if server uses nonstandard roles, include any extra roles too (stable-ish)
-    if (rolesToUse.length === 0) {
-      const extraRoles = Object.keys(filesByRole).sort();
-      rolesToUse.push(...extraRoles);
-    }
-
-    // Build fabrics array in UI slot order
-    fabrics = rolesToUse.map((role, slotIdx) => {
-      const file = filesByRole[role];
-      const url = URL.createObjectURL(file);
-
-      const p = Array.isArray(partsByRole[role]) ? partsByRole[role] : [];
-      return {
-        id: slotIdx,
-        url,
-        file,
-        parts: new Set(p)
-      };
-    });
-
-    // Rebuild assigned map from restored fabric.parts
-    assigned = { back: null, seat: null, arms: null };
-    for (const fab of fabrics) {
-      if (!fab || !fab.parts) continue;
-      fab.parts.forEach(p => {
-        assigned[p] = fab.id;
-      });
-    }
-
-
-    
-    // 5) Reset current fabric index and sync UI
-    idx = 0;
+    pillowsBaseFile = baseFile;
+    pillowsChosen = true;
 
     // ✅ symmetry with fresh flow (so Stage-1 "Continue" is not stuck disabled after restore)
     toFabricsBtn.disabled = false;
 
-    gotoFabrics(); // stage 2 + updateUI()
 
-    // 🔓 RE-ENABLE UI AFTER RESTORE (other enable/disable is handled by updateUI)
+    sofaThumb.innerHTML = '<img>';
+    loadImage(sofaThumb.firstElementChild, baseFile);
+    loadImage(baseImg2, baseFile);
+
+    // 
+
+
+    // 2) Restore mode selection (single/random) from c.mode_selection
+    if (typeof c.mode_selection === "string") {
+      modeSelection = c.mode_selection;  // your existing state var
+      // update any UI highlight for mode buttons here if you have them
+    }
+
+    // 3) Restore fabrics
+    fabrics = [];
+    for (let i = 0; i < c.fabrics.length; i++) {
+      const f = c.fabrics[i];
+      const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
+
+      fabrics.push({
+        id: i,                              // ✅ numeric, UI-consistent
+        url: URL.createObjectURL(file),
+        file,
+        tags: []                            // ✅ required for upcoming tagging mode
+      });
+
+    }
+
+    idx = 0;
+
+    // 🔴 FIX: re-enter tagged-mode initialization if needed
+    if (modeSelection === "tagged") {
+      if (tagBaseImg && pillowsBaseFile) {
+        const u = URL.createObjectURL(pillowsBaseFile);
+        tagBaseImg.src = u;
+        tagBaseImg.onload = () => { try { URL.revokeObjectURL(u); } catch(e){} };
+      }
+    }
+
+    
+    gotoFabrics(); // advance to stage 2 after restore
+
+    // 🔓 RE-ENABLE UI AFTER RESTORE
     prevStep.disabled = false;
+    // addBtn.disabled = false;
 
     await Promise.all([
       waitForImage(sofaThumb.querySelector("img")),
-      waitForImage(baseImg2)
+      waitForImage(baseImg2),
+      waitForImage(tagBaseImg)
     ]);
 
   } finally {
@@ -1670,12 +1982,12 @@ async function restoreSofaFromCreation(c) {
   }
   
 
+
+
+
   
+
 }
-
-
-
-
 
 
 
@@ -1731,8 +2043,8 @@ logoutBtn.onclick = () => {
     lastPreviewedCreation = null;
     creationPreviewModal.style.display = "none";
 
-
 };
+
 
 closeLoginModal.onclick = () => loginModal.style.display = "none";
 
@@ -1799,6 +2111,7 @@ buyCreditsModal?.querySelectorAll("[data-pack]")?.forEach(btn => {
 });
 
 
+
 // Send code
 sendCodeBtn.onclick = async () => {
   let identifier = document.getElementById("loginIdentifier").value.trim();
@@ -1821,16 +2134,17 @@ sendCodeBtn.onclick = async () => {
 
 };
 
+
 // Verify
 verifyCodeBtn.onclick = async () => {
-
+  
   let identifier = document.getElementById("loginIdentifier").value.trim();
   if (!isValidEmail(identifier) && !isValidPhone(identifier)) {
       return alert("لطفا ایمیل یا شماره موبایل را اصلاح فرمایید");
   }
   // normalize before sending to backend
   identifier = normalizePhone(identifier);
-  
+
 
   const code = document.getElementById("loginCode").value.trim();
 
@@ -1857,9 +2171,6 @@ verifyCodeBtn.onclick = async () => {
   refreshCredits();
 
 };
-
-
-
 
 window.addEventListener("storage", (e) => {
     if (e.key === "pishnama_user_token") {
@@ -1891,8 +2202,51 @@ window.addEventListener("storage", (e) => {
     }
 
 
-
 });
+
+(async function autoRestoreIfRequested() {
+  const token = localStorage.getItem("pishnama_user_token");
+  const id = localStorage.getItem("pishnama_restore_creation_id");
+  const targetMode = localStorage.getItem("pishnama_restore_target_mode");
+
+  if (!token || !id) return;
+
+  // This page’s mode (same constant you used above)
+  const THIS_PAGE_MODE = "pillows";
+  if (targetMode && targetMode !== THIS_PAGE_MODE) return;
+
+  try {
+    // Clear first to prevent loops if something errors
+    localStorage.removeItem("pishnama_restore_creation_id");
+    localStorage.removeItem("pishnama_restore_target_mode");
+
+    // Fetch full creation and restore
+    let c;
+    try {
+      ({ data: c } = await fetchWithAuth(`/api/creation/${id}`, {
+        auth: { silent: true }
+      }));
+    } catch {
+      return;
+    }
+
+
+    // Apply quality UI
+    generationQuality = (c.quality === "standard") ? "standard" : "high";
+    if (qToggle) {
+      [...qToggle.children].forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.q === generationQuality);
+      });
+    }
+
+    if (c.mode === "pillows") {
+      await restorePillowsFromCreation(c);
+    }
+  } catch (e) {
+    console.error("Auto-restore failed:", e);
+  }
+})();
+
 
 </script>
 

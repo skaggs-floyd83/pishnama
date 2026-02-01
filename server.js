@@ -286,8 +286,8 @@ const __dirname = path.dirname(__filename);
 
 
 // ====================== HISTORY CONFIG ===========================
-const HISTORY_PAGE_SIZE_DEFAULT = 12;
-const HISTORY_PAGE_SIZE_MAX = 50;
+const HISTORY_PAGE_SIZE_DEFAULT = 20;
+const HISTORY_PAGE_SIZE_MAX = 20;
 
 
 
@@ -992,35 +992,56 @@ app.get("/api/credits", (req, res) => {
 // Query params:
 //   page (1-based, default = 1)
 //   pageSize (optional)
+//
+// IMPORTANT (Stage 1 history simplification):
+//   - We HARD-LIMIT the returned history to the latest 20 creations.
+//   - Older creations remain in DB + storage, but are not returned by this API.
+//   - This keeps bandwidth low and makes the UI predictable.
 // ===============================================
 app.get("/api/history", (req, res) => {
   if (!req.userId) {
     return res.status(401).json({ error: "login_required" });
   }
 
+  const HARD_LIMIT = 20;
+
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const pageSizeRaw = parseInt(req.query.pageSize || HISTORY_PAGE_SIZE_DEFAULT, 10);
+
+  // Even if a client requests a larger page size, never exceed the hard limit.
   const pageSize = Math.min(
     Math.max(1, pageSizeRaw),
-    HISTORY_PAGE_SIZE_MAX
+    Math.min(HISTORY_PAGE_SIZE_MAX, HARD_LIMIT)
   );
 
   const offset = (page - 1) * pageSize;
 
-  // Total count (for pagination UI later)
+  // Prevent paging beyond HARD_LIMIT (we don't expose older items).
+  if (offset >= HARD_LIMIT) {
+    return res.json({
+      page,
+      pageSize,
+      total: 0,
+      items: []
+    });
+  }
+
+  // Total count (clamped) so UI won't show "Load more" beyond the hard limit.
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS cnt
     FROM creations
     WHERE user_id = ?
   `).get(req.userId);
 
-  // Fetch page of creations
+  const totalClamped = Math.min(totalRow.cnt, HARD_LIMIT);
+
+  // Fetch page of creations (only within the hard limit)
   const rows = db.prepare(`
     SELECT
       id,
       mode,
       mode_selection,
-      quality,      
+      quality,
       cost_credits,
       created_at,
       output_image_id
@@ -1030,11 +1051,10 @@ app.get("/api/history", (req, res) => {
     LIMIT ? OFFSET ?
   `).all(req.userId, pageSize, offset);
 
-
   return res.json({
     page,
     pageSize,
-    total: totalRow.cnt,
+    total: totalClamped,
     items: rows.map(r => ({
       id: r.id,
       mode: r.mode,
@@ -1045,10 +1065,6 @@ app.get("/api/history", (req, res) => {
       output_image_url: `/media/${r.output_image_id}`
     }))
   });
-
-
-
-
 });
 
 

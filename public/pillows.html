@@ -542,7 +542,7 @@ let modeSelection = "single";   // default selection
 
 let historyPage = 1;
 let historyTotal = 0;
-const HISTORY_PAGE_SIZE = 12;
+const HISTORY_PAGE_SIZE = 20;
 
 
 /* =============================== Helpers ================================== */
@@ -1674,13 +1674,6 @@ refreshCredits();
 
     <div id="creationPreviewMeta"
          style="margin-top:12px; font-size:13px; color:#cbd5e1;"></div>
-
-    <div id="creationPreviewFabrics"
-         style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;"></div>
-
-    <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px;">
-      <button class="btn" id="reuseCreationBtn">♻️ استفاده مجدد</button>
-    </div>
   </div>
 </div>
 
@@ -1708,8 +1701,6 @@ const creationPreviewModal = document.getElementById("creationPreviewModal");
 const creationPreviewCloseBtn = document.getElementById("creationPreviewCloseBtn");
 const creationPreviewImage = document.getElementById("creationPreviewImage");
 const creationPreviewMeta = document.getElementById("creationPreviewMeta");
-const creationPreviewFabrics = document.getElementById("creationPreviewFabrics");
-const reuseCreationBtn = document.getElementById("reuseCreationBtn");
 
 let lastPreviewedCreation = null;
 let previewRequestId = 0;
@@ -1790,16 +1781,6 @@ async function openCreationPreview(creationId) {
     `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +
     new Date(data.created_at).toLocaleDateString("fa-IR");
 
-  creationPreviewFabrics.innerHTML = "";
-  for (const f of data.fabrics) {
-    const img = document.createElement("img");
-    img.src = f.image_url;
-    img.style.width = "80px";
-    img.style.borderRadius = "6px";
-    img.title = f.role;
-    creationPreviewFabrics.appendChild(img);
-  }
-
   creationPreviewModal.style.display = "block";
 }
 
@@ -1812,61 +1793,6 @@ creationPreviewModal.addEventListener("click", (e) => {
     creationPreviewModal.style.display = "none";
   }
 });
-
-reuseCreationBtn.onclick = async () => {
-  // ALWAYS close history when reusing a creation
-  if (historyModal) {
-    historyModal.style.display = "none";
-  }
-
-  if (!lastPreviewedCreation) return;
-
-  const c = lastPreviewedCreation;
-
-  // Always restore quality toggle locally (safe)
-  generationQuality = (c.quality === "standard") ? "standard" : "high";
-  if (qToggle) {
-    [...qToggle.children].forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.q === generationQuality);
-    });
-  }
-
-  // IMPORTANT: define what THIS page is
-  const THIS_PAGE_MODE = "pillows";
-
-  // If creation belongs to another mode, jump to the correct page and restore there
-  if (c.mode && c.mode !== THIS_PAGE_MODE) {
-    localStorage.setItem("pishnama_restore_creation_id", String(c.id));
-    localStorage.setItem("pishnama_restore_target_mode", c.mode);
-
-    // Close modal before navigation
-    creationPreviewModal.style.display = "none";
-
-    // Navigate
-    if (c.mode === "sofa") {
-      window.location.href = "sofa";
-    } else if (c.mode === "pillows") {
-      window.location.href = "pillows";
-    } else {
-      // Unknown future mode (carpet/curtain/...) — don’t crash
-      alert("این نوع تولید هنوز در این صفحه پشتیبانی نمی‌شود.");
-    }
-    return;
-  }
-
-  
-  // Same-mode restore (this page = pillows)
-  try {
-    await restorePillowsFromCreation(c);
-  } catch (e) {
-    console.error("Restore failed:", e);
-    alert("بازگردانی با خطا مواجه شد.");
-  }
-  creationPreviewModal.style.display = "none";
-
-
-};
-
 
 async function fetchUrlAsFile(url, filename) {
   const res = await fetch(url);
@@ -2203,50 +2129,6 @@ window.addEventListener("storage", (e) => {
 
 
 });
-
-(async function autoRestoreIfRequested() {
-  const token = localStorage.getItem("pishnama_user_token");
-  const id = localStorage.getItem("pishnama_restore_creation_id");
-  const targetMode = localStorage.getItem("pishnama_restore_target_mode");
-
-  if (!token || !id) return;
-
-  // This page’s mode (same constant you used above)
-  const THIS_PAGE_MODE = "pillows";
-  if (targetMode && targetMode !== THIS_PAGE_MODE) return;
-
-  try {
-    // Clear first to prevent loops if something errors
-    localStorage.removeItem("pishnama_restore_creation_id");
-    localStorage.removeItem("pishnama_restore_target_mode");
-
-    // Fetch full creation and restore
-    let c;
-    try {
-      ({ data: c } = await fetchWithAuth(`/api/creation/${id}`, {
-        auth: { silent: true }
-      }));
-    } catch {
-      return;
-    }
-
-
-    // Apply quality UI
-    generationQuality = (c.quality === "standard") ? "standard" : "high";
-    if (qToggle) {
-      [...qToggle.children].forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.q === generationQuality);
-      });
-    }
-
-    if (c.mode === "pillows") {
-      await restorePillowsFromCreation(c);
-    }
-  } catch (e) {
-    console.error("Auto-restore failed:", e);
-  }
-})();
-
 
 </script>
 
