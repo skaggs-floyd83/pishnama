@@ -1407,7 +1407,8 @@ async function handlePreviewClick(){
       //temporary
       // window.open(URL.createObjectURL(annotatedBlob));
 
-      const imageBase64 = await sendToBackend(meta, included, annotatedFile);
+      const imageBase64 = await sendToBackend(meta, included, annotatedFile, pillowsBaseFile);
+
       if (!imageBase64) return;
       outputImg.src = "data:image/png;base64," + imageBase64;
       gotoOutput();
@@ -1457,10 +1458,15 @@ function handleRemoveFabricClick(){
 
 
 // ====== NEW: Backend integration & loading state ======
-async function sendToBackend(meta, included, baseFile) {
+async function sendToBackend(meta, included, baseFile, baseRawFile) {
   const form = new FormData();
   form.append("meta", JSON.stringify(meta));
+
+  // base_image: what the model should use as the "base"
   if (baseFile) form.append("base_image", baseFile);
+
+  // base_image_raw: original (un-annotated) base image for tagged pillows reuse/restore
+  if (baseRawFile) form.append("base_image_raw", baseRawFile);
 
   for (const it of included) {
     form.append(it.id, it.file);
@@ -1479,7 +1485,6 @@ async function sendToBackend(meta, included, baseFile) {
     throw new Error("Unauthorized");
   }
 
-
   if (data?.error === "insufficient_credits") {
     alert(
       `اعتبار کافی نیست.\n` +
@@ -1494,10 +1499,8 @@ async function sendToBackend(meta, included, baseFile) {
   }
 
   return data.image_base64;
-
-  
-
 }
+
 
 function enterLoadingState() {
   previewBtn.disabled = true;

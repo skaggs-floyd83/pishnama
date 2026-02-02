@@ -1303,6 +1303,15 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       return res.status(400).json({ error: "invalid_fabric_count" });
     }
 
+    // Tagged pillows MUST include the original base image as base_image_raw,
+    // so we can persist it and correctly restore/reuse later.
+    if (meta?.mode === "pillows" && meta?.mode_selection === "tagged") {
+      const hasBaseRaw = Array.isArray(files) && files.some(f => f.fieldname === "base_image_raw");
+      if (!hasBaseRaw) {
+        return res.status(400).json({ error: "base_image_raw_required" });
+      }
+    }
+
 
 
     // Normalize / compress uploads (server safety net)
