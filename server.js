@@ -288,6 +288,10 @@ const __dirname = path.dirname(__filename);
 // ====================== HISTORY CONFIG ===========================
 const HISTORY_PAGE_SIZE_DEFAULT = 20;
 const HISTORY_PAGE_SIZE_MAX = 20;
+const BASE_IMAGES_PAGE_SIZE_DEFAULT = 30;
+const BASE_IMAGES_PAGE_SIZE_MAX = 50;
+const FABRICS_PAGE_SIZE_DEFAULT = 30;
+const FABRICS_PAGE_SIZE_MAX = 50;
 
 
 
@@ -1084,11 +1088,107 @@ app.get("/api/history", (req, res) => {
       cost_credits: r.cost_credits,
       created_at: r.created_at,
       // IMPORTANT: history grid should use thumbnails to avoid downloading full images.
-      // Fallback to full image for legacy rows where thumb is NULL.
-      output_image_url: `/media/${r.output_thumb_image_id || r.output_image_id}`,
-      // Also expose full image explicitly (useful in later steps if needed).
+      output_thumb_url: r.output_thumb_image_id ? `/media/${r.output_thumb_image_id}` : null,
+      // Full image for click-to-open.
+      output_image_url: `/media/${r.output_image_id}`,
+      // Backward-compatible alias for full image.
       output_full_image_url: `/media/${r.output_image_id}`
 
+    }))
+  });
+});
+
+
+// ===============================================
+// GET /api/base-images
+// Returns distinct base images with thumb/full URLs
+// ===============================================
+app.get("/api/base-images", (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSizeRaw = Number(req.query.pageSize) || BASE_IMAGES_PAGE_SIZE_DEFAULT;
+  const pageSize = Math.min(Math.max(1, pageSizeRaw), BASE_IMAGES_PAGE_SIZE_MAX);
+  const offset = (page - 1) * pageSize;
+
+  const totalRow = db.prepare(`
+    SELECT COUNT(DISTINCT base_image_id) AS cnt
+    FROM creations
+    WHERE user_id = ?
+      AND base_image_id IS NOT NULL
+  `).get(req.userId);
+
+  const rows = db.prepare(`
+    SELECT
+      base_image_id AS image_id,
+      base_thumb_image_id AS thumb_image_id,
+      MAX(created_at) AS created_at
+    FROM creations
+    WHERE user_id = ?
+      AND base_image_id IS NOT NULL
+    GROUP BY base_image_id
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(req.userId, pageSize, offset);
+
+  return res.json({
+    page,
+    pageSize,
+    total: totalRow.cnt,
+    items: rows.map(r => ({
+      image_id: r.image_id,
+      created_at: r.created_at,
+      thumb_url: r.thumb_image_id ? `/media/${r.thumb_image_id}` : null,
+      full_url: `/media/${r.image_id}`
+    }))
+  });
+});
+
+
+// ===============================================
+// GET /api/fabrics
+// Returns fabrics with thumb/full URLs
+// ===============================================
+app.get("/api/fabrics", (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: "login_required" });
+  }
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSizeRaw = Number(req.query.pageSize) || FABRICS_PAGE_SIZE_DEFAULT;
+  const pageSize = Math.min(Math.max(1, pageSizeRaw), FABRICS_PAGE_SIZE_MAX);
+  const offset = (page - 1) * pageSize;
+
+  const totalRow = db.prepare(`
+    SELECT COUNT(*) AS cnt
+    FROM fabrics
+    WHERE user_id = ?
+  `).get(req.userId);
+
+  const rows = db.prepare(`
+    SELECT
+      id,
+      image_id,
+      thumb_image_id,
+      created_at
+    FROM fabrics
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(req.userId, pageSize, offset);
+
+  return res.json({
+    page,
+    pageSize,
+    total: totalRow.cnt,
+    items: rows.map(r => ({
+      id: r.id,
+      image_id: r.image_id,
+      created_at: r.created_at,
+      thumb_url: r.thumb_image_id ? `/media/${r.thumb_image_id}` : null,
+      full_url: `/media/${r.image_id}`
     }))
   });
 });
@@ -1138,6 +1238,7 @@ app.get("/api/creation/:id", (req, res) => {
     SELECT
       f.id AS fabric_id,
       f.image_id AS image_id,
+      f.thumb_image_id AS thumb_image_id,
       cf.ord AS ord,
       cf.part AS part
     FROM creation_fabrics cf
@@ -1160,6 +1261,7 @@ app.get("/api/creation/:id", (req, res) => {
       grouped.set(key, {
         id: r.fabric_id,
         image_id: r.image_id,
+        thumb_image_id: r.thumb_image_id,
         role: `fabric_${String(r.ord).padStart(2, "0")}`,
         meta: { parts: [] }
       });
@@ -1174,7 +1276,9 @@ app.get("/api/creation/:id", (req, res) => {
   
   const fabrics = Array.from(grouped.values()).map(f => ({
     ...f,
-    image_url: `/media/${f.image_id}`
+    image_url: `/media/${f.image_id}`,
+    full_url: `/media/${f.image_id}`,
+    thumb_url: f.thumb_image_id ? `/media/${f.thumb_image_id}` : null
   }));
 
 
@@ -1679,10 +1783,22 @@ app.post("/api/generate", upload.any(), async (req, res) => {
           const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
           const mf = meta.fabrics.find(x => x.id === fabricKey);
           const parts = Array.isArray(mf?.parts) ? mf.parts : [];
-          fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts });
+          fabricPlans.push({
+            ord,
+            imageId: fabricUpsert.imageId,
+            parts,
+            buffer: f.buffer,
+            mimeType: f.mimetype || "image/jpeg"
+          });
         } else {
           // pillows mode: store mode_selection in `part`
-          fabricPlans.push({ ord, imageId: fabricUpsert.imageId, parts: meta.mode_selection || "pillows" });
+          fabricPlans.push({
+            ord,
+            imageId: fabricUpsert.imageId,
+            parts: meta.mode_selection || "pillows",
+            buffer: f.buffer,
+            mimeType: f.mimetype || "image/jpeg"
+          });
         }
 
         fabricIndex++;
@@ -1727,6 +1843,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       const outputInsert = await ensureOutputImageUploadedOnce();
       const outputImageId = outputInsert.imageId;
 
+      const fabricRows = [];
 
       // Atomic DB mutation: either all rows exist, or none exist
       const creationId = db.transaction(() => {      
@@ -1753,6 +1870,12 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
           const fabricResult = insertFabric.run(req.userId, plan.imageId);
           const fabricId = fabricResult.lastInsertRowid;
+          fabricRows.push({
+            fabricId,
+            imageId: plan.imageId,
+            buffer: plan.buffer,
+            mimeType: plan.mimeType
+          });
 
           if (meta.mode === "sofa") {
             const parts = Array.isArray(plan.parts) ? plan.parts : [];
@@ -1821,6 +1944,50 @@ app.post("/api/generate", upload.any(), async (req, res) => {
             scope: "user"
           });
           outputThumbId = up.imageId;
+        }
+
+        const fabricThumbCache = new Map();
+
+        for (const row of fabricRows) {
+          if (!row?.imageId) continue;
+
+          let thumbId = fabricThumbCache.get(row.imageId);
+
+          if (!thumbId) {
+            const existingThumb = db.prepare(`
+              SELECT thumb_image_id
+              FROM fabrics
+              WHERE image_id = ?
+                AND thumb_image_id IS NOT NULL
+              ORDER BY created_at DESC
+              LIMIT 1
+            `).get(row.imageId);
+
+            if (existingThumb?.thumb_image_id) {
+              thumbId = existingThumb.thumb_image_id;
+            } else if (row.buffer) {
+              const t = await generateThumbnail(row.buffer, row.mimeType || "image/jpeg");
+              const up = await upsertImageForUser({
+                userId: req.userId,
+                buffer: t.buffer,
+                mimeType: t.mime_type,
+                scope: "user"
+              });
+              thumbId = up.imageId;
+            }
+
+            if (thumbId) {
+              fabricThumbCache.set(row.imageId, thumbId);
+            }
+          }
+
+          if (thumbId) {
+            db.prepare(`
+              UPDATE fabrics
+              SET thumb_image_id = ?
+              WHERE id = ? AND user_id = ?
+            `).run(thumbId, row.fabricId, req.userId);
+          }
         }
 
         db.prepare(`

@@ -390,6 +390,7 @@ function forceLogoutIfInvalid(tokenResponse, authOptions = {}) {
         // Clear credentials
         localStorage.removeItem("pishnama_user_token");
         localStorage.removeItem("pishnama_user_identifier");
+        void clearImageCache();
 
         // If this is an automatic logout (page load / background fetch),
         // do a hard refresh to guarantee a clean UI state.
@@ -434,6 +435,168 @@ async function fetchWithAuth(url, options = {}) {
   }
 
   return { res, data };
+}
+
+const IMAGE_CACHE_DB = "pishnama_image_cache";
+const IMAGE_CACHE_VERSION = 1;
+const THUMB_STORE = "thumbs";
+const FULL_STORE = "full";
+
+function openImageCache() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IMAGE_CACHE_DB, IMAGE_CACHE_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(THUMB_STORE)) {
+        db.createObjectStore(THUMB_STORE, { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains(FULL_STORE)) {
+        db.createObjectStore(FULL_STORE, { keyPath: "key" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getCachedBlob(storeName, key) {
+  const db = await openImageCache();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readonly");
+    const store = tx.objectStore(storeName);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result?.blob || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function setCachedBlob(storeName, key, blob) {
+  const db = await openImageCache();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    const store = tx.objectStore(storeName);
+    store.put({ key, blob, updatedAt: Date.now() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function clearImageCache() {
+  const db = await openImageCache();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([THUMB_STORE, FULL_STORE], "readwrite");
+    tx.objectStore(THUMB_STORE).clear();
+    tx.objectStore(FULL_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function fetchImageBlobWithAuth(url) {
+  const token = localStorage.getItem("pishnama_user_token");
+  const res = await fetch(url, {
+    headers: {
+      "x-user-token": token || ""
+    }
+  });
+  if (!res.ok) return null;
+  return await res.blob();
+}
+
+async function setImageFromCacheOrFetch(img, url, storeName) {
+  if (!img || !url) return;
+  const cached = await getCachedBlob(storeName, url);
+  if (cached) {
+    const objectUrl = URL.createObjectURL(cached);
+    img.src = objectUrl;
+    img.onload = () => URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  const blob = await fetchImageBlobWithAuth(url);
+  if (!blob) {
+    img.src = url;
+    return;
+  }
+  await setCachedBlob(storeName, url, blob);
+  const objectUrl = URL.createObjectURL(blob);
+  img.src = objectUrl;
+  img.onload = () => URL.revokeObjectURL(objectUrl);
+}
+
+function loadBlobToImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (err) => {
+      URL.revokeObjectURL(url);
+      reject(err);
+    };
+    img.src = url;
+  });
+}
+
+async function createThumbnailBlob(blob) {
+  const img = await loadBlobToImage(blob);
+  const maxSide = 320;
+  const scale = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
+  const targetW = Math.max(1, Math.round((img.width || maxSide) * scale));
+  const targetH = Math.max(1, Math.round((img.height || maxSide) * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  return new Promise(resolve => {
+    canvas.toBlob(
+      blobOut => resolve(blobOut),
+      "image/jpeg",
+      0.75
+    );
+  });
+}
+
+async function setHistoryThumb(img, item) {
+  if (!img) return;
+  if (item.output_thumb_url) {
+    await setImageFromCacheOrFetch(img, item.output_thumb_url, THUMB_STORE);
+    return;
+  }
+
+  if (!item.output_image_url) return;
+
+  const cached = await getCachedBlob(THUMB_STORE, item.output_image_url);
+  if (cached) {
+    const objectUrl = URL.createObjectURL(cached);
+    img.src = objectUrl;
+    img.onload = () => URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  const fullBlob = await fetchImageBlobWithAuth(item.output_image_url);
+  if (!fullBlob) {
+    img.src = item.output_image_url;
+    return;
+  }
+
+  const thumbBlob = await createThumbnailBlob(fullBlob);
+  if (thumbBlob) {
+    await setCachedBlob(THUMB_STORE, item.output_image_url, thumbBlob);
+    const objectUrl = URL.createObjectURL(thumbBlob);
+    img.src = objectUrl;
+    img.onload = () => URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  img.src = item.output_image_url;
 }
 
 
@@ -568,10 +731,10 @@ async function loadHistory(reset = false) {
     div.style.fontSize = "12px";
 
     div.innerHTML = `
-      <img src="${item.output_image_url}"
-           data-creation-id="${item.id}"
-           class="history-thumb"
-           style="width:100%; border-radius:6px; display:block; cursor:pointer;">
+      <img
+        data-creation-id="${item.id}"
+        class="history-thumb"
+        style="width:100%; border-radius:6px; display:block; cursor:pointer;">
       <div style="margin-top:6px;">
         <div>نوع: ${item.mode}</div>
         <div>کیفیت: ${item.quality}</div>
@@ -581,6 +744,8 @@ async function loadHistory(reset = false) {
     `;
 
     document.getElementById("historyGrid").appendChild(div);
+    const img = div.querySelector(".history-thumb");
+    void setHistoryThumb(img, item);
   }
 
   historyPage++;
@@ -1522,7 +1687,11 @@ async function openCreationPreview(creationId) {
 
   lastPreviewedCreation = data;
 
-  creationPreviewImage.src = data.output_full_image_url || data.output_image_url;
+  await setImageFromCacheOrFetch(
+    creationPreviewImage,
+    data.output_full_image_url || data.output_image_url,
+    FULL_STORE
+  );
 
 
 
@@ -1712,10 +1881,11 @@ loginBtn.onclick = () => {
     }
 };
 
-logoutBtn.onclick = () => {
+logoutBtn.onclick = async () => {
     // Clear stored credentials
     localStorage.removeItem("pishnama_user_token");
     localStorage.removeItem("pishnama_user_identifier");
+    await clearImageCache();
 
     // Update UI
     updateLoginButton();
