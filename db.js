@@ -117,26 +117,36 @@ export function runMigrations() {
 
 
     -- ============ CREATIONS (history of generations) ============
-
+    
     CREATE TABLE IF NOT EXISTS creations (
-      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id            INTEGER NOT NULL,
-      mode               TEXT NOT NULL,       -- 'sofa', 'pillows', 'carpet', 'drapery', ...
-      mode_selection     TEXT,                -- 'all', 'partial', 'single', 'random', etc.
-      quality            TEXT,                -- 'high' | 'standard'
-      base_image_id      INTEGER,
-      base_image_raw_id  INTEGER,
-      output_image_id    INTEGER,
-      meta_json          TEXT,                -- raw meta sent from frontend (for debugging)
-      cost_credits       INTEGER NOT NULL,    -- credits spent for this creation
-      created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id)           REFERENCES users(id)   ON DELETE CASCADE,
-      FOREIGN KEY (base_image_id)     REFERENCES images(id)  ON DELETE SET NULL,
-      FOREIGN KEY (base_image_raw_id) REFERENCES images(id)  ON DELETE SET NULL,
-      FOREIGN KEY (output_image_id)   REFERENCES images(id)  ON DELETE SET NULL
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id                   INTEGER NOT NULL,
+      mode                      TEXT NOT NULL,
+      mode_selection            TEXT,
+      quality                   TEXT,
+      base_image_id             INTEGER,
+      base_image_raw_id         INTEGER,
+      output_image_id           INTEGER,
 
+      -- NEW: thumbnail links
+      base_thumb_image_id       INTEGER,
+      base_raw_thumb_image_id   INTEGER,
+      output_thumb_image_id     INTEGER,
 
+      meta_json                 TEXT,
+      cost_credits              INTEGER NOT NULL,
+      created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+
+      FOREIGN KEY (user_id)                 REFERENCES users(id)   ON DELETE CASCADE,
+      FOREIGN KEY (base_image_id)           REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (base_image_raw_id)       REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (output_image_id)         REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (base_thumb_image_id)     REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (base_raw_thumb_image_id) REFERENCES images(id)  ON DELETE SET NULL,
+      FOREIGN KEY (output_thumb_image_id)   REFERENCES images(id)  ON DELETE SET NULL
     );
+
+
 
     CREATE INDEX IF NOT EXISTS idx_creations_user_created
       ON creations(user_id, created_at DESC);
@@ -146,6 +156,14 @@ export function runMigrations() {
 
     CREATE INDEX IF NOT EXISTS idx_creations_base_image_raw
       ON creations(base_image_raw_id);
+
+    
+    CREATE INDEX IF NOT EXISTS idx_creations_base_thumb
+      ON creations(base_thumb_image_id);
+
+    CREATE INDEX IF NOT EXISTS idx_creations_output_thumb
+      ON creations(output_thumb_image_id);
+
 
       
 

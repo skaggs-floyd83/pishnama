@@ -916,6 +916,26 @@ const MAX_FABRIC_BYTES_SERVER = 4 * 1024 * 1024; // 4 MB server threshold for fa
 const BASE_MAX_SIDE_SERVER    = 1536;
 const FABRIC_MAX_SIDE_SERVER  = 1024;
 
+async function generateThumbnail(buffer, mimeType) {
+  const img = sharp(buffer);
+
+  const thumb = await img
+    .resize({
+      width: 320,
+      height: 320,
+      fit: "inside",
+      withoutEnlargement: true
+    })
+    .jpeg({ quality: 75 })
+    .toBuffer();
+
+  return {
+    buffer: thumb,
+    mime_type: "image/jpeg"
+  };
+}
+
+
 function ensureJpegExtensionServer(name) {
   if (!name) return "image.jpg";
   return name.replace(/\.[^.]+$/,"") + ".jpg";
@@ -1044,7 +1064,8 @@ app.get("/api/history", (req, res) => {
       quality,
       cost_credits,
       created_at,
-      output_image_id
+      output_image_id,
+      output_thumb_image_id
     FROM creations
     WHERE user_id = ?
     ORDER BY created_at DESC
@@ -1062,7 +1083,12 @@ app.get("/api/history", (req, res) => {
       quality: r.quality,
       cost_credits: r.cost_credits,
       created_at: r.created_at,
-      output_image_url: `/media/${r.output_image_id}`
+      // IMPORTANT: history grid should use thumbnails to avoid downloading full images.
+      // Fallback to full image for legacy rows where thumb is NULL.
+      output_image_url: `/media/${r.output_thumb_image_id || r.output_image_id}`,
+      // Also expose full image explicitly (useful in later steps if needed).
+      output_full_image_url: `/media/${r.output_image_id}`
+
     }))
   });
 });
@@ -1095,7 +1121,10 @@ app.get("/api/creation/:id", (req, res) => {
       meta_json,
       base_image_id,
       base_image_raw_id,
-      output_image_id
+      output_image_id,
+      base_thumb_image_id,
+      base_raw_thumb_image_id,
+      output_thumb_image_id
     FROM creations
     WHERE id = ? AND user_id = ?
   `).get(creationId, req.userId);
@@ -1165,14 +1194,33 @@ app.get("/api/creation/:id", (req, res) => {
     base_image_id: creation.base_image_id,
     base_image_url: `/media/${creation.base_image_id}`,
 
+    // Base thumbnail (may be NULL for legacy rows)
+    base_thumb_image_id: creation.base_thumb_image_id,
+    base_thumb_image_url: creation.base_thumb_image_id
+      ? `/media/${creation.base_thumb_image_id}`
+      : null,
+
     // Raw original base (may be NULL for non-tagged modes)
     base_image_raw_id: creation.base_image_raw_id,
     base_image_raw_url: creation.base_image_raw_id
       ? `/media/${creation.base_image_raw_id}`
       : null,
 
+    // Raw base thumbnail (tagged pillows) (may be NULL for legacy rows)
+    base_raw_thumb_image_id: creation.base_raw_thumb_image_id,
+    base_raw_thumb_image_url: creation.base_raw_thumb_image_id
+      ? `/media/${creation.base_raw_thumb_image_id}`
+      : null,
+
     output_image_id: creation.output_image_id,
     output_image_url: `/media/${creation.output_image_id}`,
+
+    // Output thumbnail (may be NULL for legacy rows)
+    output_thumb_image_id: creation.output_thumb_image_id,
+    output_thumb_image_url: creation.output_thumb_image_id
+      ? `/media/${creation.output_thumb_image_id}`
+      : null,
+
 
     fabrics
   });
@@ -1727,6 +1775,76 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       })();
 
       // creationId is now guaranteed to have all linked rows
+
+
+      // ====================
+      // THUMBNAIL GENERATION (server-side, at persistence time)
+      // ====================
+      // Note: We do NOT fail persistence if thumbnail generation fails.
+      // We'll just leave thumb columns NULL and the UI can fallback later.
+
+      try {
+        let baseThumbId = null;
+        let baseRawThumbId = null;
+        let outputThumbId = null;
+
+        // Base (annotated) thumbnail
+        if (baseAnnotatedFile?.buffer) {
+          const t = await generateThumbnail(baseAnnotatedFile.buffer, baseAnnotatedFile.mimetype || "image/jpeg");
+          const up = await upsertImageForUser({
+            userId: req.userId,
+            buffer: t.buffer,
+            mimeType: t.mime_type,
+            scope: "user"
+          });
+          baseThumbId = up.imageId;
+        }
+
+        // Base RAW thumbnail (tagged pillows)
+        if (baseRawFile?.buffer) {
+          const t = await generateThumbnail(baseRawFile.buffer, baseRawFile.mimetype || "image/jpeg");
+          const up = await upsertImageForUser({
+            userId: req.userId,
+            buffer: t.buffer,
+            mimeType: t.mime_type,
+            scope: "user"
+          });
+          baseRawThumbId = up.imageId;
+        }
+
+        // Output thumbnail (generated image)
+        if (imageBuffer) {
+          const t = await generateThumbnail(imageBuffer, "image/png");
+          const up = await upsertImageForUser({
+            userId: req.userId,
+            buffer: t.buffer,
+            mimeType: t.mime_type,
+            scope: "user"
+          });
+          outputThumbId = up.imageId;
+        }
+
+        db.prepare(`
+          UPDATE creations
+          SET
+            base_thumb_image_id = ?,
+            base_raw_thumb_image_id = ?,
+            output_thumb_image_id = ?
+          WHERE id = ? AND user_id = ?
+        `).run(
+          baseThumbId,
+          baseRawThumbId,
+          outputThumbId,
+          creationId,
+          req.userId
+        );
+
+      } catch (thumbErr) {
+        console.warn("Thumbnail generation failed (non-fatal):", thumbErr?.message || thumbErr);
+      }
+
+
+      
 
 
 
