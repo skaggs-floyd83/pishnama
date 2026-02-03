@@ -99,12 +99,14 @@ export function runMigrations() {
     -- ============ FABRICS (reusable user fabrics) ============
 
     CREATE TABLE IF NOT EXISTS fabrics (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      image_id INTEGER,
-      user_id     INTEGER NOT NULL,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      image_id      INTEGER,
+      thumb_image_id INTEGER,
+      user_id       INTEGER NOT NULL,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL
+      FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL,
+      FOREIGN KEY (thumb_image_id) REFERENCES images(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_fabrics_user
@@ -112,6 +114,9 @@ export function runMigrations() {
 
     CREATE INDEX IF NOT EXISTS idx_fabrics_image
       ON fabrics(image_id);
+
+    CREATE INDEX IF NOT EXISTS idx_fabrics_thumb_image
+      ON fabrics(thumb_image_id);
 
 
 
@@ -188,6 +193,19 @@ export function runMigrations() {
 
     COMMIT;
   `);
+
+  ensureColumnExists("creations", "base_thumb_image_id", "INTEGER");
+  ensureColumnExists("creations", "base_raw_thumb_image_id", "INTEGER");
+  ensureColumnExists("creations", "output_thumb_image_id", "INTEGER");
+  ensureColumnExists("fabrics", "thumb_image_id", "INTEGER");
+}
+
+function ensureColumnExists(table, column, type) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (columns.some(col => col.name === column)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 // Export the db handle for queries later
