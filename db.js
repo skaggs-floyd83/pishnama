@@ -193,20 +193,10 @@ export function runMigrations() {
 
     COMMIT;
   `);
-
-  ensureColumnExists("creations", "base_thumb_image_id", "INTEGER");
-  ensureColumnExists("creations", "base_raw_thumb_image_id", "INTEGER");
-  ensureColumnExists("creations", "output_thumb_image_id", "INTEGER");
-  ensureColumnExists("fabrics", "thumb_image_id", "INTEGER");
+  
 }
 
-function ensureColumnExists(table, column, type) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (columns.some(col => col.name === column)) {
-    return;
-  }
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-}
+
 
 // Export the db handle for queries later
 export { db };

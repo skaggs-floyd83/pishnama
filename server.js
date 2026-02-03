@@ -1120,18 +1120,35 @@ app.get("/api/base-images", (req, res) => {
       AND base_image_id IS NOT NULL
   `).get(req.userId);
 
+  
   const rows = db.prepare(`
     SELECT
-      base_image_id AS image_id,
-      base_thumb_image_id AS thumb_image_id,
-      MAX(created_at) AS created_at
-    FROM creations
-    WHERE user_id = ?
-      AND base_image_id IS NOT NULL
-    GROUP BY base_image_id
-    ORDER BY created_at DESC
+      c.base_image_id AS image_id,
+      c.base_thumb_image_id AS thumb_image_id,
+      c.created_at AS created_at
+    FROM creations c
+    JOIN (
+      SELECT
+        base_image_id,
+        MAX(created_at) AS max_created_at,
+        MAX(id) AS max_id
+      FROM creations
+      WHERE user_id = ?
+        AND base_image_id IS NOT NULL
+      GROUP BY base_image_id
+    ) latest
+      ON latest.base_image_id = c.base_image_id
+     AND (
+          c.created_at = latest.max_created_at
+          OR c.id = latest.max_id
+         )
+    WHERE c.user_id = ?
+      AND c.base_image_id IS NOT NULL
+    GROUP BY c.base_image_id
+    ORDER BY c.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(req.userId, pageSize, offset);
+  `).all(req.userId, req.userId, pageSize, offset);
+  
 
   return res.json({
     page,
