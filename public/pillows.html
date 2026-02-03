@@ -1779,6 +1779,8 @@ async function openCreationPreview(creationId) {
   lastPreviewedCreation = data;
 
   creationPreviewImage.src = data.output_image_url;
+  creationPreviewImage.src = data.output_full_image_url || data.output_image_url;
+
 
   creationPreviewMeta.textContent =
     `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +

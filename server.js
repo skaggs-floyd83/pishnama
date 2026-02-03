@@ -1181,7 +1181,7 @@ app.get("/api/creation/:id", (req, res) => {
 
 
   // ---- response ----  
-  return res.json({
+    return res.json({
     id: creation.id,
     mode: creation.mode,
     mode_selection: creation.mode_selection,
@@ -1190,40 +1190,39 @@ app.get("/api/creation/:id", (req, res) => {
     created_at: creation.created_at,
     meta: JSON.parse(creation.meta_json || "{}"),
 
-    // Generation base (annotated for tagged pillows)
+    // =========================
+    // Base (annotated for tagged pillows)
+    // =========================
     base_image_id: creation.base_image_id,
-    base_image_url: `/media/${creation.base_image_id}`,
-
-    // Base thumbnail (may be NULL for legacy rows)
-    base_thumb_image_id: creation.base_thumb_image_id,
-    base_thumb_image_url: creation.base_thumb_image_id
-      ? `/media/${creation.base_thumb_image_id}`
+    base_image_url: creation.base_image_id ? `/media/${creation.base_image_id}` : null,
+    base_full_image_url: creation.base_image_id ? `/media/${creation.base_image_id}` : null,
+    base_thumb_image_url: creation.base_image_id
+      ? `/media/${creation.base_thumb_image_id || creation.base_image_id}`
       : null,
 
-    // Raw original base (may be NULL for non-tagged modes)
+    // =========================
+    // Base RAW (original, only for tagged pillows restore)
+    // =========================
     base_image_raw_id: creation.base_image_raw_id,
-    base_image_raw_url: creation.base_image_raw_id
-      ? `/media/${creation.base_image_raw_id}`
+    base_image_raw_url: creation.base_image_raw_id ? `/media/${creation.base_image_raw_id}` : null,
+    base_raw_full_image_url: creation.base_image_raw_id ? `/media/${creation.base_image_raw_id}` : null,
+    base_raw_thumb_image_url: creation.base_image_raw_id
+      ? `/media/${creation.base_raw_thumb_image_id || creation.base_image_raw_id}`
       : null,
 
-    // Raw base thumbnail (tagged pillows) (may be NULL for legacy rows)
-    base_raw_thumb_image_id: creation.base_raw_thumb_image_id,
-    base_raw_thumb_image_url: creation.base_raw_thumb_image_id
-      ? `/media/${creation.base_raw_thumb_image_id}`
-      : null,
-
+    // =========================
+    // Output
+    // =========================
     output_image_id: creation.output_image_id,
-    output_image_url: `/media/${creation.output_image_id}`,
-
-    // Output thumbnail (may be NULL for legacy rows)
-    output_thumb_image_id: creation.output_thumb_image_id,
-    output_thumb_image_url: creation.output_thumb_image_id
-      ? `/media/${creation.output_thumb_image_id}`
+    output_image_url: creation.output_image_id ? `/media/${creation.output_image_id}` : null, // backward-compatible
+    output_full_image_url: creation.output_image_id ? `/media/${creation.output_image_id}` : null,
+    output_thumb_image_url: creation.output_image_id
+      ? `/media/${creation.output_thumb_image_id || creation.output_image_id}`
       : null,
-
 
     fabrics
   });
+
 
 
 
