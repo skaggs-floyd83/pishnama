@@ -322,7 +322,9 @@
             <div class="rightline" style="gap:8px">
               <label class="btn" title="آپلود پارچه">📁<input id="fabFile" type="file" accept="image/*" hidden></label>
               <label class="btn" title="دوربین">📷<input id="fabCam" type="file" accept="image/*" capture="environment" hidden></label>
+              <label class="btn" title="انتخاب از آلبوم پارچه‌ها" id="openFabricAlbumBtn">📚</label>
             </div>
+
             <img id="fabImg" alt="" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);object-fit:cover;background:#0f172a;visibility:hidden">
           </div>
           <!-- I commented this line and the related codes - I will probably delete it in the future (search fabPlaceholder to find related codes) -->
@@ -2513,6 +2515,47 @@ window.addEventListener("storage", (e) => {
   }
 })();
 </script>
+
+<!-- =========================
+     Fabrics Album Modal
+========================= -->
+<div id="fabricAlbumModal" style="
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.6);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:10060;
+">
+  <div id="fabricAlbumCard" style="
+    width:min(900px,92vw);
+    max-height:85vh;
+    overflow:auto;
+    background:#0f1629;
+    border:1px solid #3a4367;
+    border-radius:12px;
+    padding:16px;
+  ">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>آلبوم پارچه‌ها</strong>
+      <button class="btn" id="closeFabricAlbumBtn">✕</button>
+    </div>
+
+    <div id="fabricAlbumGrid"
+         style="
+           margin-top:16px;
+           display:grid;
+           grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
+           gap:12px;
+         ">
+    </div>
+
+    <div style="margin-top:16px;text-align:center">
+      <button class="btn" id="loadMoreFabricBtn">بارگذاری بیشتر</button>
+    </div>
+  </div>
+</div>
+
 
 
 </body>
