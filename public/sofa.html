@@ -123,6 +123,50 @@
   #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#0f1a33;border:1px solid var(--border);color:#e5e7eb;padding:8px 12px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999}
   #toast.show{opacity:1}
 
+  /*  */
+  /* =========================
+    Base Images Album Modal
+  ========================= */
+  #baseAlbumModal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.6);
+    z-index: 10050;
+    display: none;              /* hidden by default */
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  #baseAlbumCard {
+    width: min(900px, 92vw);
+    max-height: 85vh;
+    overflow: auto;
+    background: #0f1629;
+    border: 1px solid #3a4367;
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  #baseAlbumGrid {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px;
+  }
+
+  .baseAlbumThumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid #3a4367;
+    cursor: pointer;
+    display: block;
+    background: #0f172a;
+  }
+  
+
 </style>
 </head>
 <body>
@@ -190,7 +234,10 @@
           <div class="row">
             <label class="btn" title="انتخاب فایل">📁<input id="sofaFile" type="file" accept="image/*" hidden></label>
             <label class="btn" title="دوربین">📷<input id="sofaCam" type="file" accept="image/*" capture="environment" hidden></label>
+            <label class="btn" title="انتخاب از آلبوم پایه‌ها" id="openBaseAlbumBtn">📚</label>
           </div>
+
+
           <!-- Continue becomes enabled only after the image loads -->
           <button class="btn primary" id="toFabricsBtn" disabled>ادامه ◀</button>
         </div>
@@ -2109,6 +2156,131 @@ window.addEventListener("storage", (e) => {
   }
 })();
 </script>
+
+
+
+<!-- Base Images Album Modal -->
+<div id="baseAlbumModal">
+  <div id="baseAlbumCard">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-weight:700;">آلبوم تصاویر پایه</div>
+      <button class="btn" id="closeBaseAlbumBtn">✕</button>
+    </div>
+
+    <div id="baseAlbumGrid"></div>
+
+    <div style="margin-top:16px; text-align:center;">
+      <button class="btn" id="loadMoreBaseImagesBtn">بارگذاری بیشتر</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function initBaseAlbum(){
+  let baseAlbumPage = 1;
+  const BASE_PAGE_SIZE = 24;
+
+  const openBtn  = document.getElementById("openBaseAlbumBtn");
+  const modal    = document.getElementById("baseAlbumModal");
+  const card     = document.getElementById("baseAlbumCard");
+  const closeBtn = document.getElementById("closeBaseAlbumBtn");
+  const grid     = document.getElementById("baseAlbumGrid");
+  const moreBtn  = document.getElementById("loadMoreBaseImagesBtn");
+
+  if (!openBtn || !modal || !grid || !moreBtn || !closeBtn) return;
+
+  function openModal(){
+    baseAlbumPage = 1;
+    grid.innerHTML = "";
+    modal.style.display = "flex";
+    loadPage();
+  }
+
+  function closeModal(){
+    modal.style.display = "none";
+  }
+
+  // close when clicking outside the card
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  openBtn.addEventListener("click", openModal);
+  closeBtn.addEventListener("click", closeModal);
+
+  moreBtn.addEventListener("click", () => {
+    baseAlbumPage++;
+    loadPage();
+  });
+
+  async function fetchAndCacheImage(url, storeName){
+    const cached = await getCachedBlob(storeName, url);
+    if (cached) return cached;
+
+    const blob = await fetchImageBlobWithAuth(url);
+    if (!blob) return null;
+
+    await setCachedBlob(storeName, url, blob);
+    return blob;
+  }
+
+  function setBaseImageFromBlob(blob){
+    const file = new File([blob], "base.jpg", { type: blob.type || "image/jpeg" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    const input = document.getElementById("sofaFile");
+    if (!input) return;
+
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change"));
+  }
+
+  async function loadPage(){
+    let data;
+    try {
+      ({ data } = await fetchWithAuth(`/api/base-images?page=${baseAlbumPage}&pageSize=${BASE_PAGE_SIZE}`));
+    } catch {
+      return; // auth handler already ran
+    }
+
+    for (const item of (data.items || [])) {
+      const img = document.createElement("img");
+      img.className = "baseAlbumThumb";
+      img.alt = "base";
+
+      // thumbs
+      if (item.thumb_url) {
+        await setImageFromCacheOrFetch(img, item.thumb_url, THUMB_STORE);
+      } else if (item.full_url) {
+        // fallback: show full as thumb (still cached in THUMB store if possible)
+        await setImageFromCacheOrFetch(img, item.full_url, THUMB_STORE);
+      }
+
+      img.addEventListener("click", async () => {
+        if (!item.full_url) return;
+
+        const blob = await fetchAndCacheImage(item.full_url, FULL_STORE);
+        if (!blob) return;
+
+        setBaseImageFromBlob(blob);
+        closeModal();
+      });
+
+      grid.appendChild(img);
+    }
+
+    // hide "more" if no more items reported
+    if (typeof data.total === "number") {
+      const shown = grid.children.length;
+      moreBtn.style.display = shown < data.total ? "inline-block" : "none";
+    }
+  }
+})();
+</script>
+
+
+
 
 </body>
 </html>
