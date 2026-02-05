@@ -650,74 +650,6 @@ async function setHistoryThumb(img, item) {
 
 
 
-(function initFabricAlbum(){
-  let page = 1;
-  const PAGE_SIZE = 24;
-
-  const openBtn  = document.getElementById("openFabricAlbumBtn");
-  const modal    = document.getElementById("fabricAlbumModal");
-  const grid     = document.getElementById("fabricAlbumGrid");
-  const closeBtn = document.getElementById("closeFabricAlbumBtn");
-  const moreBtn  = document.getElementById("loadMoreFabricBtn");
-
-  if (!openBtn || !modal || !grid) return;
-
-  openBtn.onclick = () => {
-    page = 1;
-    grid.innerHTML = "";
-    modal.style.display = "flex";
-    loadPage();
-  };
-
-  closeBtn.onclick = () => modal.style.display = "none";
-  modal.onclick = e => { if (e.target === modal) modal.style.display = "none"; };
-
-  moreBtn.onclick = () => { page++; loadPage(); };
-
-  async function loadPage(){
-    let data;
-    try {
-      ({ data } = await fetchWithAuth(
-        `/api/fabrics?page=${page}&pageSize=${PAGE_SIZE}`
-      ));
-    } catch {
-      return;
-    }
-
-    for (const f of (data.items || [])) {
-      const img = document.createElement("img");
-      img.className = "baseAlbumThumb";
-
-      if (f.thumb_url) {
-        await setImageFromCacheOrFetch(img, f.thumb_url, THUMB_STORE);
-      }
-
-      img.onclick = async () => {
-        if (!f.full_url) return;
-
-        const blob = await fetchImageBlobWithAuth(f.full_url);
-        if (!blob) return;
-
-        const file = new File([blob], "fabric.jpg", {
-          type: blob.type || "image/jpeg"
-        });
-
-        // reuse existing fabric pipeline
-        await setFabricFromFile(file);
-        modal.style.display = "none";
-      };
-
-      grid.appendChild(img);
-    }
-
-    if (typeof data.total === "number") {
-      const shown = grid.children.length;
-      moreBtn.style.display = shown < data.total ? "inline-block" : "none";
-    }
-  }
-})();
-
-
 
 // Maps 1..3 to Persian ordinals: اول / دوم / سوم
 function faOrdinal(n){ return n===1?'اول':(n===2?'دوم':'سوم'); }
@@ -2389,6 +2321,80 @@ window.addEventListener("storage", (e) => {
     </div>
   </div>
 </div>
+
+
+
+<script>
+  
+(function initFabricAlbum(){
+  let page = 1;
+  const PAGE_SIZE = 24;
+
+  const openBtn  = document.getElementById("openFabricAlbumBtn");
+  const modal    = document.getElementById("fabricAlbumModal");
+  const grid     = document.getElementById("fabricAlbumGrid");
+  const closeBtn = document.getElementById("closeFabricAlbumBtn");
+  const moreBtn  = document.getElementById("loadMoreFabricBtn");
+
+  if (!openBtn || !modal || !grid) return;
+
+  openBtn.onclick = () => {
+    page = 1;
+    grid.innerHTML = "";
+    modal.style.display = "flex";
+    loadPage();
+  };
+
+  closeBtn.onclick = () => modal.style.display = "none";
+  modal.onclick = e => { if (e.target === modal) modal.style.display = "none"; };
+
+  moreBtn.onclick = () => { page++; loadPage(); };
+
+  async function loadPage(){
+    let data;
+    try {
+      ({ data } = await fetchWithAuth(
+        `/api/fabrics?page=${page}&pageSize=${PAGE_SIZE}`
+      ));
+    } catch {
+      return;
+    }
+
+    for (const f of (data.items || [])) {
+      const img = document.createElement("img");
+      img.className = "baseAlbumThumb";
+
+      if (f.thumb_url) {
+        await setImageFromCacheOrFetch(img, f.thumb_url, THUMB_STORE);
+      }
+
+      img.onclick = async () => {
+        if (!f.full_url) return;
+
+        const blob = await fetchImageBlobWithAuth(f.full_url);
+        if (!blob) return;
+
+        const file = new File([blob], "fabric.jpg", {
+          type: blob.type || "image/jpeg"
+        });
+
+        // reuse existing fabric pipeline
+        await setFabricFromFile(file);
+        modal.style.display = "none";
+      };
+
+      grid.appendChild(img);
+    }
+
+    if (typeof data.total === "number") {
+      const shown = grid.children.length;
+      moreBtn.style.display = shown < data.total ? "inline-block" : "none";
+    }
+  }
+})();
+
+
+</script>
 
 
 </body>
