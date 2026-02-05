@@ -2363,16 +2363,27 @@ window.addEventListener("storage", (e) => {
     for (const f of (data.items || [])) {
       const img = document.createElement("img");
       img.className = "baseAlbumThumb";
+      
 
       if (f.thumb_url) {
         await setImageFromCacheOrFetch(img, f.thumb_url, THUMB_STORE);
+      } else if (f.full_url) {
+        // fallback: show full as thumb (still cached in THUMB_STORE if possible)
+        await setImageFromCacheOrFetch(img, f.full_url, THUMB_STORE);
       }
 
+
+      
       img.onclick = async () => {
         if (!f.full_url) return;
 
-        const blob = await fetchImageBlobWithAuth(f.full_url);
-        if (!blob) return;
+        // ✅ Full image: cache in FULL_STORE so reselecting doesn’t re-download
+        let blob = await getCachedBlob(FULL_STORE, f.full_url);
+        if (!blob) {
+          blob = await fetchImageBlobWithAuth(f.full_url);
+          if (!blob) return;
+          await setCachedBlob(FULL_STORE, f.full_url, blob);
+        }
 
         const file = new File([blob], "fabric.jpg", {
           type: blob.type || "image/jpeg"
@@ -2382,6 +2393,9 @@ window.addEventListener("storage", (e) => {
         await setFabricFromFile(file);
         modal.style.display = "none";
       };
+
+
+
 
       grid.appendChild(img);
     }
