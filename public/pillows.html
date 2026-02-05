@@ -2014,12 +2014,21 @@ creationPreviewModal.addEventListener("click", (e) => {
   }
 });
 
+
 async function fetchUrlAsFile(url, filename) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to fetch file: " + url);
-  const blob = await res.blob();
+  // ✅ Use FULL_STORE cache first (restore/reuse should not keep re-downloading)
+  let blob = await getCachedBlob(FULL_STORE, url);
+
+  if (!blob) {
+    // ✅ Authenticated fetch (required for protected media endpoints)
+    blob = await fetchImageBlobWithAuth(url);
+    if (!blob) throw new Error("Failed to fetch file: " + url);
+    await setCachedBlob(FULL_STORE, url, blob);
+  }
+
   return new File([blob], filename, { type: blob.type || "image/jpeg" });
 }
+
 
 async function restorePillowsFromCreation(c) {
   enterRestoreLoading();
@@ -2088,7 +2097,11 @@ async function restorePillowsFromCreation(c) {
     fabrics = [];
     for (let i = 0; i < c.fabrics.length; i++) {
       const f = c.fabrics[i];
-      const file = await fetchUrlAsFile(f.image_url, `fabric_${i + 1}.jpg`);
+
+      const fabricUrl = f.full_url || f.image_url;
+      if (!fabricUrl) throw new Error("Missing fabric URL for restore");
+      const file = await fetchUrlAsFile(fabricUrl, `fabric_${i + 1}.jpg`);
+
 
       fabrics.push({
         id: i,                              // ✅ numeric, UI-consistent
@@ -2600,13 +2613,22 @@ window.addEventListener("storage", (e) => {
 
       if (f.thumb_url) {
         await setImageFromCacheOrFetch(img, f.thumb_url, THUMB_STORE);
+      } else if (f.full_url) {
+        // fallback: show full as thumb (still cached in THUMB_STORE)
+        await setImageFromCacheOrFetch(img, f.full_url, THUMB_STORE);
       }
+
 
       img.onclick = async () => {
         if (!f.full_url) return;
 
-        const blob = await fetchImageBlobWithAuth(f.full_url);
-        if (!blob) return;
+        // ✅ Full image: cache in FULL_STORE so reselecting doesn’t re-download
+        let blob = await getCachedBlob(FULL_STORE, f.full_url);
+        if (!blob) {
+          blob = await fetchImageBlobWithAuth(f.full_url);
+          if (!blob) return;
+          await setCachedBlob(FULL_STORE, f.full_url, blob);
+        }
 
         const file = new File([blob], "fabric.jpg", {
           type: blob.type || "image/jpeg"
@@ -2616,6 +2638,10 @@ window.addEventListener("storage", (e) => {
         await setFabricFromFile(file);
         modal.style.display = "none";
       };
+
+
+
+
 
       grid.appendChild(img);
     }
