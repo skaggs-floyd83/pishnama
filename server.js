@@ -2182,8 +2182,27 @@ app.post("/api/generate", upload.any(), async (req, res) => {
               throw new Error("fabric_image_missing");
             }
 
-            const fabricResult = insertFabric.run(req.userId, plan.imageId);
-            const fabricId = fabricResult.lastInsertRowid;
+            
+            // Reuse existing fabric row for this user+image_id (prevents album duplicates)
+            let existing = db.prepare(`
+              SELECT id
+              FROM fabrics
+              WHERE user_id = ? AND image_id = ?
+              ORDER BY created_at DESC
+              LIMIT 1
+            `).get(req.userId, plan.imageId);
+
+            let fabricId;
+            if (existing?.id) {
+              fabricId = existing.id;
+            } else {
+              const fabricResult = insertFabric.run(req.userId, plan.imageId);
+              fabricId = fabricResult.lastInsertRowid;
+            }
+
+
+
+
 
             fabricRows.push({
               fabricId,
