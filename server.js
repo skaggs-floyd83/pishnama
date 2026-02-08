@@ -49,6 +49,92 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 dotenv.config({ quiet: true });
 
+// ====================== PERSISTENCE DEBUG LOGGING ===========================
+// Enable with: PERSIST_LOG_VERBOSE=true
+const PERSIST_LOG_VERBOSE = (process.env.PERSIST_LOG_VERBOSE || "false") === "true";
+
+// Tracks how many background persistence jobs are running concurrently.
+let ACTIVE_PERSIST_JOBS = 0;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function msSince(t0) {
+  return Date.now() - t0;
+}
+
+function shortHash(hex, n = 12) {
+  if (!hex) return null;
+  return String(hex).slice(0, n);
+}
+
+function safeNum(n) {
+  return Number.isFinite(n) ? n : null;
+}
+
+// ---------------------- Buffered persistence logs -----------------
+// We buffer logs per-trace and only print them if persistence ultimately fails.
+const TRACE_LOG_BUFFER = new Map(); // trace -> payload[]
+const TRACE_LOG_MAX_EVENTS = 600;    // safety cap per trace (avoid runaway memory)
+
+function logP(trace, event, details = {}) {
+  if (!PERSIST_LOG_VERBOSE) return;
+
+  const t = trace || null;
+  const payload = {
+    ts: nowIso(),
+    trace: t,
+    event,
+    ...details
+  };
+
+  if (!t) return; // no trace => nothing to buffer
+
+  let arr = TRACE_LOG_BUFFER.get(t);
+  if (!arr) {
+    arr = [];
+    TRACE_LOG_BUFFER.set(t, arr);
+  }
+
+  // Cap per-trace memory usage
+  if (arr.length < TRACE_LOG_MAX_EVENTS) {
+    arr.push(payload);
+  } else if (arr.length === TRACE_LOG_MAX_EVENTS) {
+    arr.push({
+      ts: nowIso(),
+      trace: t,
+      event: "log_buffer_capped",
+      maxEvents: TRACE_LOG_MAX_EVENTS
+    });
+  }
+}
+
+function discardTraceLogs(trace) {
+  if (!trace) return;
+  TRACE_LOG_BUFFER.delete(trace);
+}
+
+function flushTraceLogs(trace, reason = "unknown") {
+  if (!trace) return;
+
+  const arr = TRACE_LOG_BUFFER.get(trace);
+  if (!arr || arr.length === 0) return;
+
+  console.error(`[PERSIST][FLUSH] trace=${trace} reason=${reason} events=${arr.length}`);
+  for (const payload of arr) {
+    console.error("[PERSIST]", JSON.stringify(payload));
+  }
+
+  TRACE_LOG_BUFFER.delete(trace);
+}
+// ---------------------------------------------------------------------------
+
+
+// ============================================================================
+
+
+
 
 // ====================== S3-COMPATIBLE STORAGE (NEW) ===========================
 // Works with AWS S3 and S3-compatible providers (MinIO, Wasabi, Backblaze B2 S3, etc.)
@@ -98,14 +184,50 @@ function briefS3Err(err) {
   };
 }
 
-async function s3Send(cmd, label) {
+
+async function s3Send(cmd, label, ctx = null) {
+  const t0 = Date.now();
+
+  // Optional start log (verbose)
+  if (ctx?.trace) {
+    logP(ctx.trace, "s3_send_start", {
+      label,
+      key: ctx?.storageKey || null,
+      bytes: safeNum(ctx?.byteSize),
+      mime: ctx?.mimeType || null
+    });
+  }
+
   try {
-    return await s3.send(cmd);
+    const out = await s3.send(cmd);
+
+    if (ctx?.trace) {
+      logP(ctx.trace, "s3_send_ok", {
+        label,
+        key: ctx?.storageKey || null,
+        ms: msSince(t0)
+      });
+    }
+
+    return out;
   } catch (err) {
     console.error(`S3 error during ${label}:`, briefS3Err(err));
+
+    if (ctx?.trace) {
+      logP(ctx.trace, "s3_send_fail", {
+        label,
+        key: ctx?.storageKey || null,
+        bytes: safeNum(ctx?.byteSize),
+        mime: ctx?.mimeType || null,
+        ms: msSince(t0),
+        err: briefS3Err(err)
+      });
+    }
+
     throw err;
   }
 }
+
 
 
 
@@ -121,29 +243,72 @@ function guessExtFromMime(mime) {
 
 // Ensure the object exists in S3 for a given key; if not, re-upload.
 // This protects against rare cases where DB row exists but object was deleted or upload failed mid-way.
-async function ensureObjectExists({ storageKey, buffer, mimeType }) {
+async function ensureObjectExists({ storageKey, buffer, mimeType, trace = null }) {
+  const t0 = Date.now();
+
   try {
-    await s3Send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: storageKey }), `HeadObject ${storageKey}`);
+    await s3Send(
+      new HeadObjectCommand({ Bucket: S3_BUCKET, Key: storageKey }),
+      `HeadObject ${storageKey}`,
+      { trace, storageKey }
+    );
+
+    if (trace) {
+      logP(trace, "s3_head_exists", { key: storageKey, ms: msSince(t0) });
+    }
+
     return; // exists
   } catch (e) {
-    // If missing (or any head failure), try to re-upload idempotently.
-    await s3Send(new PutObjectCommand({ 
-      Bucket: S3_BUCKET,
-      Key: storageKey,
-      Body: buffer,
-      ContentType: mimeType,
-      ACL: "private"
-    }), `PutObject(reupload) ${storageKey}`);
+    if (trace) {
+      logP(trace, "s3_head_missing_or_fail", {
+        key: storageKey,
+        ms: msSince(t0),
+        err: briefS3Err(e)
+      });
+    }
 
+    // If missing (or any head failure), try to re-upload idempotently.
+    await s3Send(
+      new PutObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: storageKey,
+        Body: buffer,
+        ContentType: mimeType,
+        ACL: "private"
+      }),
+      `PutObject(reupload) ${storageKey}`,
+      { trace, storageKey, byteSize: buffer?.length, mimeType }
+    );
+
+    if (trace) {
+      logP(trace, "s3_reupload_ok", { key: storageKey });
+    }
   }
 }
 
 
+
+
 // Insert-or-reuse an image row (dedup) + ensure object exists in bucket
-async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) {
+async function upsertImageForUser({ userId, buffer, mimeType, scope = "user", trace = null, role = null }) {
   const hash = sha256Hex(buffer);
   const byteSize = buffer.length;
   const ext = guessExtFromMime(mimeType);
+
+  const t0 = Date.now();
+
+  if (trace) {
+    logP(trace, "img_upsert_start", {
+      role: role || null,
+      scope,
+      userId,
+      bytes: byteSize,
+      mime: mimeType || null,
+      sha: shortHash(hash)
+    });
+  }
+
+
 
   const ownerUserId = scope === "user" ? userId : null;
 
@@ -163,18 +328,32 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
   `).get(scope, ownerUserId, hash);
 
   if (existing) {
-    await ensureObjectExists({ storageKey: existing.storage_key, buffer, mimeType });
+    await ensureObjectExists({ storageKey: existing.storage_key, buffer, mimeType, trace });
+    if (trace) {
+      logP(trace, "img_upsert_reused", {
+        role: role || null,
+        imageId: existing.id,
+        key: existing.storage_key,
+        sha: shortHash(hash),
+        ms: msSince(t0)
+      });
+    }
+
     return { imageId: existing.id, storageKey: existing.storage_key, reused: true };
   }
 
   // Upload object first (idempotent because key is stable)
-  await s3Send(new PutObjectCommand({ 
-    Bucket: S3_BUCKET,
-    Key: storageKey,
-    Body: buffer,
-    ContentType: mimeType,
-    ACL: "private"
-  }), `PutObject(dedup) ${storageKey}`);
+  await s3Send(
+    new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: mimeType,
+      ACL: "private"
+    }),
+    `PutObject(dedup) ${storageKey}`,
+    { trace, storageKey, byteSize, mimeType }
+  );
 
 
 
@@ -184,7 +363,17 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(scope, ownerUserId, hash, byteSize, mimeType, storageKey);
 
+    if (trace) {
+      logP(trace, "img_upsert_inserted", {
+        role: role || null,
+        imageId: info.lastInsertRowid,
+        key: storageKey,
+        sha: shortHash(hash),
+        ms: msSince(t0)
+      });
+    }
     return { imageId: info.lastInsertRowid, storageKey, reused: false };
+
   } catch (err) {
     // Race-safe dedup: another request may have inserted the same (scope, owner, sha256)
     const msg = String(err?.message || "");
@@ -198,7 +387,17 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
       `).get(scope, ownerUserId, hash);
 
       if (row) {
-        await ensureObjectExists({ storageKey: row.storage_key, buffer, mimeType });
+        await ensureObjectExists({ storageKey: row.storage_key, buffer, mimeType, trace });
+        if (trace) {
+          logP(trace, "img_upsert_race_reused", {
+            role: role || null,
+            imageId: row.id,
+            key: row.storage_key,
+            sha: shortHash(hash),
+            ms: msSince(t0)
+          });
+        }
+
         return { imageId: row.id, storageKey: row.storage_key, reused: true };
       }
     }
@@ -208,17 +407,47 @@ async function upsertImageForUser({ userId, buffer, mimeType, scope = "user" }) 
       storageKey,
       err: err.message
     });
+
+    if (trace) {
+      logP(trace, "img_upsert_fail", {
+        role: role || null,
+        scope,
+        userId,
+        key: storageKey,
+        sha: shortHash(hash),
+        bytes: byteSize,
+        mime: mimeType || null,
+        ms: msSince(t0),
+        err: String(err?.message || err)
+      });
+    }
+
     throw err;
+
   }
 }
 
 
 
 // Insert image WITHOUT deduplication (used for output images only)
-async function insertImageNoDedup({ userId, buffer, mimeType, scope = "user" }) {
+async function insertImageNoDedup({ userId, buffer, mimeType, scope = "user", trace = null, role = null }) {
+
   const hash = sha256Hex(buffer); // stored for reference, NOT for dedup
   const byteSize = buffer.length;
   const ext = guessExtFromMime(mimeType);
+
+  const t0 = Date.now();
+  if (trace) {
+    logP(trace, "img_output_start", {
+      role: role || null,
+      scope,
+      userId,
+      bytes: byteSize,
+      mime: mimeType || null,
+      sha: shortHash(hash)
+    });
+  }
+
 
   const ownerUserId = scope === "user" ? userId : null;
 
@@ -231,18 +460,33 @@ async function insertImageNoDedup({ userId, buffer, mimeType, scope = "user" }) 
 
   
 
-  await s3Send(new PutObjectCommand({
-    Bucket: S3_BUCKET,
-    Key: storageKey,
-    Body: buffer,
-    ContentType: mimeType,
-    ACL: "private"
-  }), `PutObject(output) ${storageKey}`);
+  await s3Send(
+    new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: mimeType,
+      ACL: "private"
+    }),
+    `PutObject(output) ${storageKey}`,
+    { trace, storageKey, byteSize, mimeType }
+  );
+
 
   const info = db.prepare(`
     INSERT INTO images (scope, owner_user_id, sha256, byte_size, mime_type, storage_key)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(scope, ownerUserId, hash, byteSize, mimeType, storageKey);
+
+  if (trace) {
+    logP(trace, "img_output_ok", {
+      role: role || null,
+      imageId: info.lastInsertRowid,
+      key: storageKey,
+      ms: msSince(t0)
+    });
+  }
+
 
   return { imageId: info.lastInsertRowid, storageKey };
 }
@@ -1434,6 +1678,26 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     const meta = JSON.parse(req.body.meta);
     const files = req.files;
 
+    // Per-request trace id for correlating persistence logs
+    const trace = crypto.randomBytes(8).toString("hex");
+    const reqT0 = Date.now();
+
+    logP(trace, "generate_received", {
+      userId: req.userId || null,
+      mode: meta?.mode || null,
+      mode_selection: meta?.mode_selection || null,
+      quality: meta?.quality || null,
+      fileCount: Array.isArray(files) ? files.length : 0,
+      files: Array.isArray(files)
+        ? files.map(f => ({
+            fieldname: f.fieldname,
+            name: f.originalname,
+            bytes: f.size,
+            mime: f.mimetype
+          }))
+        : []
+    });
+
     
     // ====================== HARD GUARDRAILS (Stage 4.4) ======================
     if (!Array.isArray(files) || files.length === 0) {
@@ -1489,6 +1753,17 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       const processed = await processUploadedImage(f, kind);
       processedFiles.push(processed);
     }
+    logP(trace, "uploads_processed", {
+      ms: msSince(reqT0),
+      processed: processedFiles.map(f => ({
+        fieldname: f.fieldname,
+        name: f.originalname,
+        bytes: f.buffer?.length,
+        mime: f.mimetype || null
+
+      }))
+    });
+
 
 
     // console.log("Generation requested by user:", req.userId || "unauthenticated");
@@ -1530,6 +1805,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     creditsReserved = true;
     reservedCost = cost;
 
+    logP(trace, "credits_reserved", { cost, ms: msSince(reqT0) });
 
 
 
@@ -1706,13 +1982,21 @@ app.post("/api/generate", upload.any(), async (req, res) => {
         userId: req.userId,
         buffer: imageBuffer,
         mimeType: "image/png",
-        scope: "user"
+        scope: "user",
+        trace,
+        role: "output_full"
       });
+
 
       return outputImageInsert;
     }
 
 
+
+    logP(trace, "generation_ok_fast_response", {
+      outputBytes: imageBuffer.length,
+      ms: msSince(reqT0)
+    });
     // ====================== FAST RESPONSE TO USER ======================
     // Respond immediately with the generated image
     let persistenceFailed = false;
@@ -1723,355 +2007,412 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
     
 
-    
-
+    //
     async function runPersistenceOnce() {
-      
-      // Hard cap output size (cost + storage guardrail)
-      const MAX_OUTPUT_BYTES_HARD = 12 * 1024 * 1024; // 12 MB
-      if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {          
-        throw new Error("output_too_large");    
-      }
+      const persistT0 = Date.now();
+      let persistStage = "start";
 
-      
-
-      const baseAnnotatedFile = processedFiles.find(f => f.fieldname === "base_image");
-      const baseRawFile       = processedFiles.find(f => f.fieldname === "base_image_raw");
-
-      let baseImageId = null;
-      let baseImageRawId = null;
-
-
-      // ====================== STORE BASE IMAGES (ANNOTATED + RAW) =================
-      // Annotated (generation input)
-      if (baseAnnotatedFile) {
-        const upsert = await upsertImageForUser({
-          userId: req.userId,
-          buffer: baseAnnotatedFile.buffer,
-          mimeType: baseAnnotatedFile.mimetype || "image/jpeg",
-          scope: "user"
-        });
-        baseImageId = upsert.imageId;
-      }
-
-      // Raw original (optional)
-      if (baseRawFile) {
-        const upsertRaw = await upsertImageForUser({
-          userId: req.userId,
-          buffer: baseRawFile.buffer,
-          mimeType: baseRawFile.mimetype || "image/jpeg",
-          scope: "user"
-        });
-        baseImageRawId = upsertRaw.imageId;
-      }
-
-
-
-      // ====================== REFERENTIAL INTEGRITY (Stage 3.3) =====================
-      // Wrap ALL DB writes for a generation in a single transaction.
-      // If anything fails, we roll back so we never store partial creations/fabrics.
-      // ==============================================================================
-      // ====================== SAVE CREATION RECORD (ATOMIC) ===========================
-
-      // logging a creation without a base image
-      if (!baseAnnotatedFile || !baseImageId) {
-        throw new Error("missing_base_image");
-      }
-
-
-      // Precompute fabric rows (async work already done above for images; this is just mapping)
-      const fabricPlans = []; // [{ ord, imageId, partsOrModePart: string[] | null | string }]
-      let fabricIndex = 1;
-
-      for (const f of processedFiles) {
-        if (f.fieldname === "base_image" || f.fieldname === "base_image_raw") continue;
-
-        // Store fabric in cloud (dedup) — OUTSIDE the DB transaction (async)
-        const fabricUpsert = await upsertImageForUser({
-          userId: req.userId,
-          buffer: f.buffer,
-          mimeType: f.mimetype || "image/jpeg",
-          scope: "user"
-        });
-
-        const ord = fabricIndex;
-
-        if (meta.mode === "sofa") {
-          const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
-          const mf = meta.fabrics.find(x => x.id === fabricKey);
-          const parts = Array.isArray(mf?.parts) ? mf.parts : [];
-          fabricPlans.push({
-            ord,
-            imageId: fabricUpsert.imageId,
-            parts,
-            buffer: f.buffer,
-            mimeType: f.mimetype || "image/jpeg"
-          });
-        } else {
-          // pillows mode: store mode_selection in `part`
-          fabricPlans.push({
-            ord,
-            imageId: fabricUpsert.imageId,
-            parts: meta.mode_selection || "pillows",
-            buffer: f.buffer,
-            mimeType: f.mimetype || "image/jpeg"
-          });
-        }
-
-        fabricIndex++;
-      }
-
-      // Prepare statements once
-      const insertCreation = db.prepare(`            
-        INSERT INTO creations (
-          user_id,
-          mode,
-          mode_selection,
-          quality,
-          base_image_id,
-          base_image_raw_id,
-          output_image_id,
-          meta_json,
-          cost_credits
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const insertFabric = db.prepare(`
-        INSERT INTO fabrics (
-          user_id,
-          image_id,
-          created_at
-        )
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-      `);
-
-      const insertCreationFabric = db.prepare(`
-        INSERT INTO creation_fabrics (
-          creation_id,
-          fabric_id,
-          ord,
-          part
-        )
-        VALUES (?, ?, ?, ?)
-      `);
-
-      
-      const outputInsert = await ensureOutputImageUploadedOnce();
-      const outputImageId = outputInsert.imageId;
-
-      const fabricRows = [];
-
-      // Atomic DB mutation: either all rows exist, or none exist
-      const creationId = db.transaction(() => {      
-
-        const result = insertCreation.run(
-          req.userId,
-          meta.mode,
-          meta.mode_selection,
-          meta.quality,
-          baseImageId,
-          baseImageRawId || null,
-          outputImageId,
-          JSON.stringify(meta),
-          cost
-        );
-
-        const newCreationId = result.lastInsertRowid;
-
-        for (const plan of fabricPlans) {
-          // Never insert a fabric row without an image id
-          if (!plan.imageId) {
-            throw new Error("fabric_image_missing");
-          }
-
-          const fabricResult = insertFabric.run(req.userId, plan.imageId);
-          const fabricId = fabricResult.lastInsertRowid;
-          fabricRows.push({
-            fabricId,
-            imageId: plan.imageId,
-            buffer: plan.buffer,
-            mimeType: plan.mimeType
-          });
-
-          if (meta.mode === "sofa") {
-            const parts = Array.isArray(plan.parts) ? plan.parts : [];
-
-            if (parts.length === 0) {
-              insertCreationFabric.run(newCreationId, fabricId, plan.ord, null);
-            } else {
-              for (const part of parts) {
-                insertCreationFabric.run(newCreationId, fabricId, plan.ord, part);
-              }
-            }
-          } else {
-            // pillows: plan.parts is a string
-            insertCreationFabric.run(newCreationId, fabricId, plan.ord, String(plan.parts || "pillows"));
-          }
-        }
-
-        return newCreationId;
-      })();
-
-      // creationId is now guaranteed to have all linked rows
-
-
-      // ====================
-      // THUMBNAIL GENERATION (server-side, at persistence time)
-      // ====================
-      // Note: We do NOT fail persistence if thumbnail generation fails.
-      // We'll just leave thumb columns NULL and the UI can fallback later.
+      logP(trace, "persist_attempt_start", {
+        activeJobs: ACTIVE_PERSIST_JOBS,
+        msSinceRequest: msSince(reqT0)
+      });
 
       try {
-        let baseThumbId = null;
-        let baseRawThumbId = null;
-        let outputThumbId = null;
-
-        // Base (annotated) thumbnail
-        if (baseAnnotatedFile?.buffer) {
-          const t = await generateThumbnail(baseAnnotatedFile.buffer, baseAnnotatedFile.mimetype || "image/jpeg");
-          const up = await upsertImageForUser({
-            userId: req.userId,
-            buffer: t.buffer,
-            mimeType: t.mime_type,
-            scope: "user"
-          });
-          baseThumbId = up.imageId;
+        // Hard cap output size (cost + storage guardrail)
+        const MAX_OUTPUT_BYTES_HARD = 12 * 1024 * 1024; // 12 MB
+        if (imageBuffer.length > MAX_OUTPUT_BYTES_HARD) {
+          throw new Error("output_too_large");
         }
 
-        // Base RAW thumbnail (tagged pillows)
-        if (baseRawFile?.buffer) {
-          const t = await generateThumbnail(baseRawFile.buffer, baseRawFile.mimetype || "image/jpeg");
-          const up = await upsertImageForUser({
+        const baseAnnotatedFile = processedFiles.find(f => f.fieldname === "base_image");
+        const baseRawFile = processedFiles.find(f => f.fieldname === "base_image_raw");
+
+        let baseImageId = null;
+        let baseImageRawId = null;
+
+        // ====================== STORE BASE IMAGES (ANNOTATED + RAW) =================
+        // Annotated (generation input)
+        if (baseAnnotatedFile) {
+          persistStage = "base_annotated";
+
+          const upsert = await upsertImageForUser({
             userId: req.userId,
-            buffer: t.buffer,
-            mimeType: t.mime_type,
-            scope: "user"
+            buffer: baseAnnotatedFile.buffer,
+            mimeType: baseAnnotatedFile.mimetype || "image/jpeg",
+            scope: "user",
+            trace,
+            role: "base_annotated"
           });
-          baseRawThumbId = up.imageId;
+
+          baseImageId = upsert.imageId;
         }
 
-        // Output thumbnail (generated image)
-        if (imageBuffer) {
-          const t = await generateThumbnail(imageBuffer, "image/png");
-          const up = await upsertImageForUser({
+        // Raw original (optional)
+        if (baseRawFile) {
+          persistStage = "base_raw";
+
+          const upsertRaw = await upsertImageForUser({
             userId: req.userId,
-            buffer: t.buffer,
-            mimeType: t.mime_type,
-            scope: "user"
+            buffer: baseRawFile.buffer,
+            mimeType: baseRawFile.mimetype || "image/jpeg",
+            scope: "user",
+            trace,
+            role: "base_raw"
           });
-          outputThumbId = up.imageId;
+
+          baseImageRawId = upsertRaw.imageId;
         }
 
-        const fabricThumbCache = new Map();
+        // Must have base annotated to create a creation
+        if (!baseAnnotatedFile || !baseImageId) {
+          throw new Error("missing_base_image");
+        }
 
-        for (const row of fabricRows) {
-          if (!row?.imageId) continue;
+        // Precompute fabric rows (async work already done above for images; this is just mapping)
+        const fabricPlans = []; // [{ ord, imageId, parts, buffer, mimeType }] where parts is array or string (pillows)
+        let fabricIndex = 1;
 
-          let thumbId = fabricThumbCache.get(row.imageId);
+        for (const f of processedFiles) {
+          if (f.fieldname === "base_image" || f.fieldname === "base_image_raw") continue;
 
-          if (!thumbId) {
-            const existingThumb = db.prepare(`
-              SELECT thumb_image_id
-              FROM fabrics
-              WHERE image_id = ?
-                AND thumb_image_id IS NOT NULL
-              ORDER BY created_at DESC
-              LIMIT 1
-            `).get(row.imageId);
+          persistStage = `fabric_${String(fabricIndex).padStart(2, "0")}`;
 
-            if (existingThumb?.thumb_image_id) {
-              thumbId = existingThumb.thumb_image_id;
-            } else if (row.buffer) {
-              const t = await generateThumbnail(row.buffer, row.mimeType || "image/jpeg");
-              const up = await upsertImageForUser({
-                userId: req.userId,
-                buffer: t.buffer,
-                mimeType: t.mime_type,
-                scope: "user"
-              });
-              thumbId = up.imageId;
+          // Store fabric in cloud (dedup) — OUTSIDE the DB transaction (async)
+          const fabricUpsert = await upsertImageForUser({
+            userId: req.userId,
+            buffer: f.buffer,
+            mimeType: f.mimetype || "image/jpeg",
+            scope: "user",
+            trace,
+            role: `fabric_${String(fabricIndex).padStart(2, "0")}`
+          });
+
+          const ord = fabricIndex;
+
+          if (meta.mode === "sofa") {
+            const fabricKey = `fabric_${String(ord).padStart(2, "0")}`;
+            const mf = meta.fabrics.find(x => x.id === fabricKey);
+            const parts = Array.isArray(mf?.parts) ? mf.parts : [];
+
+            fabricPlans.push({
+              ord,
+              imageId: fabricUpsert.imageId,
+              parts,
+              buffer: f.buffer,
+              mimeType: f.mimetype || "image/jpeg"
+            });
+          } else {
+            // pillows mode: store mode_selection in `part`
+            fabricPlans.push({
+              ord,
+              imageId: fabricUpsert.imageId,
+              parts: meta.mode_selection || "pillows",
+              buffer: f.buffer,
+              mimeType: f.mimetype || "image/jpeg"
+            });
+          }
+
+          fabricIndex++;
+        }
+
+        // Prepare statements once
+        const insertCreation = db.prepare(`
+          INSERT INTO creations (
+            user_id,
+            mode,
+            mode_selection,
+            quality,
+            base_image_id,
+            base_image_raw_id,
+            output_image_id,
+            meta_json,
+            cost_credits
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const insertFabric = db.prepare(`
+          INSERT INTO fabrics (
+            user_id,
+            image_id,
+            created_at
+          )
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+        `);
+
+        const insertCreationFabric = db.prepare(`
+          INSERT INTO creation_fabrics (
+            creation_id,
+            fabric_id,
+            ord,
+            part
+          )
+          VALUES (?, ?, ?, ?)
+        `);
+
+        // Ensure output image uploaded (reused across retries)
+        persistStage = "output_full";
+        const outputInsert = await ensureOutputImageUploadedOnce();
+
+        logP(trace, "persist_db_phase_start", { ms: msSince(persistT0) });
+
+        const outputImageId = outputInsert.imageId;
+        const fabricRows = [];
+
+        // ====================== DB TRANSACTION ======================
+        persistStage = "db_transaction";
+
+        const creationId = db.transaction(() => {
+          const result = insertCreation.run(
+            req.userId,
+            meta.mode,
+            meta.mode_selection,
+            meta.quality,
+            baseImageId,
+            baseImageRawId || null,
+            outputImageId,
+            JSON.stringify(meta),
+            cost
+          );
+
+          const newCreationId = result.lastInsertRowid;
+
+          for (const plan of fabricPlans) {
+            if (!plan.imageId) {
+              throw new Error("fabric_image_missing");
+            }
+
+            const fabricResult = insertFabric.run(req.userId, plan.imageId);
+            const fabricId = fabricResult.lastInsertRowid;
+
+            fabricRows.push({
+              fabricId,
+              imageId: plan.imageId,
+              buffer: plan.buffer,
+              mimeType: plan.mimeType
+            });
+
+            if (meta.mode === "sofa") {
+              const parts = Array.isArray(plan.parts) ? plan.parts : [];
+
+              if (parts.length === 0) {
+                insertCreationFabric.run(newCreationId, fabricId, plan.ord, null);
+              } else {
+                for (const part of parts) {
+                  insertCreationFabric.run(newCreationId, fabricId, plan.ord, part);
+                }
+              }
+            } else {
+              // pillows: plan.parts is a string
+              insertCreationFabric.run(newCreationId, fabricId, plan.ord, String(plan.parts || "pillows"));
+            }
+          }
+
+          return newCreationId;
+        })();
+
+        // ======================
+        // THUMBNAIL GENERATION (non-fatal)
+        // ======================
+        persistStage = "thumbnails";
+
+        try {
+          let baseThumbId = null;
+          let baseRawThumbId = null;
+          let outputThumbId = null;
+
+          // Base (annotated) thumbnail
+          if (baseAnnotatedFile?.buffer) {
+            const t = await generateThumbnail(baseAnnotatedFile.buffer, baseAnnotatedFile.mimetype || "image/jpeg");
+
+            const up = await upsertImageForUser({
+              userId: req.userId,
+              buffer: t.buffer,
+              mimeType: t.mime_type,
+              scope: "user",
+              trace,
+              role: "thumb_base_annotated"
+            });
+
+            baseThumbId = up.imageId;
+          }
+
+          // Base RAW thumbnail (tagged pillows)
+          if (baseRawFile?.buffer) {
+            const t = await generateThumbnail(baseRawFile.buffer, baseRawFile.mimetype || "image/jpeg");
+
+            const up = await upsertImageForUser({
+              userId: req.userId,
+              buffer: t.buffer,
+              mimeType: t.mime_type,
+              scope: "user",
+              trace,
+              role: "thumb_base_raw"
+            });
+
+            baseRawThumbId = up.imageId;
+          }
+
+          // Output thumbnail (generated image)
+          if (imageBuffer) {
+            const t = await generateThumbnail(imageBuffer, "image/png");
+
+            const up = await upsertImageForUser({
+              userId: req.userId,
+              buffer: t.buffer,
+              mimeType: t.mime_type,
+              scope: "user",
+              trace,
+              role: "thumb_output"
+            });
+
+            outputThumbId = up.imageId;
+          }
+
+          const fabricThumbCache = new Map();
+
+          for (const row of fabricRows) {
+            if (!row?.imageId) continue;
+
+            let thumbId = fabricThumbCache.get(row.imageId);
+
+            if (!thumbId) {
+              const existingThumb = db.prepare(`
+                SELECT thumb_image_id
+                FROM fabrics
+                WHERE image_id = ?
+                  AND thumb_image_id IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+              `).get(row.imageId);
+
+              if (existingThumb?.thumb_image_id) {
+                thumbId = existingThumb.thumb_image_id;
+              } else if (row.buffer) {
+                const t = await generateThumbnail(row.buffer, row.mimeType || "image/jpeg");
+
+                const up = await upsertImageForUser({
+                  userId: req.userId,
+                  buffer: t.buffer,
+                  mimeType: t.mime_type,
+                  scope: "user",
+                  trace,
+                  role: `thumb_fabric_image_${row.imageId}`
+                });
+
+                thumbId = up.imageId;
+              }
+
+              if (thumbId) {
+                fabricThumbCache.set(row.imageId, thumbId);
+              }
             }
 
             if (thumbId) {
-              fabricThumbCache.set(row.imageId, thumbId);
+              db.prepare(`
+                UPDATE fabrics
+                SET thumb_image_id = ?
+                WHERE id = ? AND user_id = ?
+              `).run(thumbId, row.fabricId, req.userId);
             }
           }
 
-          if (thumbId) {
-            db.prepare(`
-              UPDATE fabrics
-              SET thumb_image_id = ?
-              WHERE id = ? AND user_id = ?
-            `).run(thumbId, row.fabricId, req.userId);
-          }
+          db.prepare(`
+            UPDATE creations
+            SET
+              base_thumb_image_id = ?,
+              base_raw_thumb_image_id = ?,
+              output_thumb_image_id = ?
+            WHERE id = ? AND user_id = ?
+          `).run(
+            baseThumbId,
+            baseRawThumbId,
+            outputThumbId,
+            creationId,
+            req.userId
+          );
+
+        } catch (thumbErr) {
+          console.warn("Thumbnail generation failed (non-fatal):", thumbErr?.message || thumbErr);
         }
 
-        db.prepare(`
-          UPDATE creations
-          SET
-            base_thumb_image_id = ?,
-            base_raw_thumb_image_id = ?,
-            output_thumb_image_id = ?
-          WHERE id = ? AND user_id = ?
-        `).run(
-          baseThumbId,
-          baseRawThumbId,
-          outputThumbId,
-          creationId,
-          req.userId
-        );
+        logP(trace, "persist_attempt_ok", { ms: msSince(persistT0) });
 
-      } catch (thumbErr) {
-        console.warn("Thumbnail generation failed (non-fatal):", thumbErr?.message || thumbErr);
+      } catch (e) {
+        // This is the missing piece: stage-aware “throw” log, so you can see
+        // exactly whether it died at base/fabric/output/db/thumbs.
+        logP(trace, "persist_attempt_throw", {
+          stage: persistStage,
+          ms: msSince(persistT0),
+          err: String(e?.message || e)
+        });
+        throw e;
       }
+    }
 
-
-      
-
-
-
-    } 
-
+    //
     
     
     setImmediate(async () => {
+      ACTIVE_PERSIST_JOBS += 1;
+      logP(trace, "persist_job_start", { activeJobs: ACTIVE_PERSIST_JOBS });
+
+      let jobOk = false;
+      let jobRetryOk = false;
+
       try {
         await runPersistenceOnce();
+        jobOk = true;
+        logP(trace, "persist_job_done", { activeJobs: ACTIVE_PERSIST_JOBS, ok: true });
+
       } catch (err1) {
         console.warn("Persistence attempt 1 failed, retrying once:", err1.message);
 
+        logP(trace, "persist_attempt1_failed", {
+          err: String(err1?.message || err1),
+          activeJobs: ACTIVE_PERSIST_JOBS
+        });
+
         try {
           await runPersistenceOnce();
+          jobOk = true;
+          jobRetryOk = true;
+          logP(trace, "persist_job_done", { activeJobs: ACTIVE_PERSIST_JOBS, ok: true, retry: true });
+
         } catch (err2) {
           persistenceFailed = true;
           console.error("Persistence failed after retry:", err2);
+
+          logP(trace, "persist_failed_after_retry", {
+            err: String(err2?.message || err2),
+            activeJobs: ACTIVE_PERSIST_JOBS
+          });
 
           // Refund reserved credits because persistence ultimately failed
           if (creditsReserved) {
             try { refundCredits(req.userId, reservedCost); } catch (e) {}
             creditsReserved = false;
+
+            logP(trace, "credits_refunded_after_persist_fail", {
+              refunded: reservedCost,
+              msSinceRequest: msSince(reqT0)
+            });
           }
+        }
+      } finally {
+        ACTIVE_PERSIST_JOBS -= 1;
+        logP(trace, "persist_job_end", { activeJobs: ACTIVE_PERSIST_JOBS });
+
+        // Option A behavior:
+        // - Success => discard buffered logs (no console noise)
+        // - Failure => flush buffered logs to console once
+        if (jobOk) {
+          discardTraceLogs(trace);
+        } else {
+          flushTraceLogs(trace, "persist_failed_after_retry");
         }
       }
     });
-    
-
-
-
-
-
-
-    setTimeout(() => {
-      if (persistenceFailed) {       
-        console.warn(
-          "Persistence failed after image delivery; credits were refunded",
-          { userId: req.userId, cost: reservedCost }
-        );
-      }
-    }, 0);
-
-
 
 
 
