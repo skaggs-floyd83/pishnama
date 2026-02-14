@@ -38,7 +38,6 @@ async function generateWithGemini3Pro({ meta, prompt, processedFiles }) {
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  // Map server "quality" to a sensible Gemini imageSize default.
   // You can override via env GEMINI_IMAGE_SIZE_STANDARD / GEMINI_IMAGE_SIZE_HIGH.
   const aspectRatio = process.env.GEMINI_ASPECT_RATIO || "1:1";
   const imageSize = process.env.GEMINI_IMAGE_SIZE || "1K";
