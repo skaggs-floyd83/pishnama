@@ -12,11 +12,81 @@ import FormData from "form-data";
  * Returns: { buffer: Buffer, mimeType: string }
  */
 export async function generateImage({ meta, prompt, processedFiles }) {
-  
-  return await generateWithGemini3Pro({ meta, prompt, processedFiles });
+  const provider = String(process.env.AI_IMAGE_PROVIDER || "openai").toLowerCase();
+
+  if (provider === "gemini" || provider === "nanopro" || provider === "gemini-3-pro-image-preview") {
+    return await generateWithGemini3Pro({ meta, prompt, processedFiles });
+  }
 
   // default: openai
-  // return await generateWithOpenAI({ meta, prompt, processedFiles });
+  return await generateWithOpenAI({ meta, prompt, processedFiles });
+}
+
+// -------------------------------
+// OpenAI (current backend behavior)
+// -------------------------------
+async function generateWithOpenAI({ meta, prompt, processedFiles }) {
+  // Keep your existing mapping exactly as in server.js
+  let fidelity;
+  let outQuality;
+  let model;
+  let size = "auto";
+
+  if (meta.quality === "high") {
+    model = "gpt-image-1";
+    fidelity = "low";
+    outQuality = "medium";
+  } else {
+    model = "gpt-image-1-mini";
+    fidelity = "low";
+    outQuality = "high";
+  }
+
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("input_fidelity", fidelity);
+  form.append("quality", outQuality);
+  form.append("size", size);
+  form.append("n", "1");
+
+  // Preserve existing behavior: send base + base_raw (if present) + fabrics as "image"
+  for (const f of processedFiles) {
+    form.append("image", f.buffer, { filename: f.originalname });
+  }
+
+  const response = await fetch(process.env.AI_MODEL_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + process.env.AI_MODEL_TOKEN
+    },
+    body: form
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    // pass provider error text upward
+    throw new Error(`openai_request_failed: ${text}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`openai_non_json_response: ${text}`);
+  }
+
+  const b64 = data?.data?.[0]?.b64_json;
+  if (!b64) {
+    throw new Error("openai_no_image_returned");
+  }
+
+  // NOTE: OpenAI response here does not provide mime type in your current flow.
+  // Your server currently treats it as PNG; keep that default.
+  return {
+    buffer: Buffer.from(b64, "base64"),
+    mimeType: "image/png"
+  };
 }
 
 // -----------------------------------------
@@ -41,8 +111,10 @@ async function generateWithGemini3Pro({ meta, prompt, processedFiles }) {
   // Map server "quality" to a sensible Gemini imageSize default.
   // You can override via env GEMINI_IMAGE_SIZE_STANDARD / GEMINI_IMAGE_SIZE_HIGH.
   const aspectRatio = process.env.GEMINI_ASPECT_RATIO || "1:1";
-  const imageSize = process.env.GEMINI_IMAGE_SIZE || "1K";
-    
+  const imageSize =
+    meta?.quality === "high"
+      ? (process.env.GEMINI_IMAGE_SIZE_HIGH || "1K") // could be changed to 2k
+      : (process.env.GEMINI_IMAGE_SIZE_STANDARD || "1K");
 
   // Build parts exactly like NanoPro.js, but using in-memory buffers.
   // Keep existing behavior: include ALL processed files as inline images.
