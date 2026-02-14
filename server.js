@@ -1345,9 +1345,14 @@ app.get("/api/history", (req, res) => {
 });
 
 
+
 // ===============================================
 // GET /api/base-images
 // Returns distinct base images with thumb/full URLs
+// NOTE:
+//   - For tagged pillows, base_image_id is the ANNOTATED base (markers)
+//     and base_image_raw_id is the ORIGINAL base.
+//   - The base album should show ORIGINAL base when available.
 // ===============================================
 app.get("/api/base-images", (req, res) => {
   if (!req.userId) {
@@ -1359,42 +1364,46 @@ app.get("/api/base-images", (req, res) => {
   const pageSize = Math.min(Math.max(1, pageSizeRaw), BASE_IMAGES_PAGE_SIZE_MAX);
   const offset = (page - 1) * pageSize;
 
+  // We want to show ORIGINAL base when available (base_image_raw_id),
+  // otherwise fall back to base_image_id.
   const totalRow = db.prepare(`
-    SELECT COUNT(DISTINCT base_image_id) AS cnt
+    SELECT COUNT(DISTINCT COALESCE(base_image_raw_id, base_image_id)) AS cnt
     FROM creations
     WHERE user_id = ?
-      AND base_image_id IS NOT NULL
+      AND (base_image_id IS NOT NULL OR base_image_raw_id IS NOT NULL)
   `).get(req.userId);
 
-  
   const rows = db.prepare(`
     SELECT
-      c.base_image_id AS image_id,
-      c.base_thumb_image_id AS thumb_image_id,
-      c.created_at AS created_at
-    FROM creations c
+      chosen.image_id AS image_id,
+      chosen.thumb_image_id AS thumb_image_id,
+      chosen.created_at AS created_at
+    FROM (
+      SELECT
+        COALESCE(base_image_raw_id, base_image_id) AS image_id,
+        COALESCE(base_raw_thumb_image_id, base_thumb_image_id) AS thumb_image_id,
+        created_at,
+        id
+      FROM creations
+      WHERE user_id = ?
+        AND (base_image_id IS NOT NULL OR base_image_raw_id IS NOT NULL)
+    ) chosen
     JOIN (
       SELECT
-        base_image_id,
+        COALESCE(base_image_raw_id, base_image_id) AS image_id,
         MAX(created_at) AS max_created_at,
         MAX(id) AS max_id
       FROM creations
       WHERE user_id = ?
-        AND base_image_id IS NOT NULL
-      GROUP BY base_image_id
+        AND (base_image_id IS NOT NULL OR base_image_raw_id IS NOT NULL)
+      GROUP BY COALESCE(base_image_raw_id, base_image_id)
     ) latest
-      ON latest.base_image_id = c.base_image_id
-     AND (
-          c.created_at = latest.max_created_at
-          OR c.id = latest.max_id
-         )
-    WHERE c.user_id = ?
-      AND c.base_image_id IS NOT NULL
-    GROUP BY c.base_image_id
-    ORDER BY c.created_at DESC
+      ON latest.image_id = chosen.image_id
+     AND (chosen.created_at = latest.max_created_at OR chosen.id = latest.max_id)
+    GROUP BY chosen.image_id
+    ORDER BY chosen.created_at DESC
     LIMIT ? OFFSET ?
   `).all(req.userId, req.userId, pageSize, offset);
-  
 
   return res.json({
     page,
@@ -1408,6 +1417,9 @@ app.get("/api/base-images", (req, res) => {
     }))
   });
 });
+
+
+
 
 
 // ===============================================
