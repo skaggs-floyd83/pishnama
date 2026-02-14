@@ -737,9 +737,9 @@ const AUTH_TOKEN_DAYS = 30; // persistent login lifetime
 // Maximum number of old credits that can be preserved on top-up
 const CREDIT_KEEP_THRESHOLD = 10;
 
-// Credit cost per generation
-const CREDIT_COST_STANDARD = 1;
-const CREDIT_COST_HIGH = 2;
+// Fixed model configuration (single model, single quality)
+const FIXED_MODEL_QUALITY = "high";
+const CREDIT_COST_FIXED = 2;
 
 // Default expiration for new credit packages (days)
 const CREDIT_PACKAGE_DAYS = 30;
@@ -795,13 +795,13 @@ function getUserCredits(userId) {
   };
 }
 
-// Generation cost calculator
-function getGenerationCost(meta) {
-  if (meta?.quality === "high") {
-    return CREDIT_COST_HIGH;
-  }
-  return CREDIT_COST_STANDARD;
+// Generation cost calculator (fixed)
+function getGenerationCost(_meta) {
+  return CREDIT_COST_FIXED;
 }
+
+
+
 
 ///
 // Credit deduction primitive (This function assumes sufficiency)
@@ -1687,9 +1687,11 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     //   meta.mode_selection:
     //        sofa:    "all" or "partial"
     //        pillows: "single" or "random"
-    //   meta.quality: "standard" or "high"
+    //   meta.quality: fixed model quality (a fixed amount for now that we use only one model with one quality-might change in the future)
     // -----------------------------------------------------------------------
     const meta = JSON.parse(req.body.meta);
+    // Force fixed quality (frontend no longer exposes quality selection)
+    meta.quality = FIXED_MODEL_QUALITY;    
     const files = req.files;
 
     // Per-request trace id for correlating persistence logs

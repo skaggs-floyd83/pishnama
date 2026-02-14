@@ -303,16 +303,17 @@
 
 
 
-      <!-- Generate row: quality toggle + preview (integration point for the model) -->
+      <!-- Generate row: preview (integration point for the model) -->
       <div class="controls">
         <div class="rightline" style="gap:8px; margin-bottom: 20px; margin-top: 10px;">
-          <div class="toggle" id="qToggle" style="margin-left: 10px;">
-            <button class="active" data-q="high">هوش یک &nbsp; (2 سکه)</button>
-            <button data-q="standard">هوش دو &nbsp; (1 سکه)</button>
-          </div>
           <button class="btn primary" id="previewBtn">✨ بساز</button>
         </div>
       </div>
+
+
+
+
+      
     </section>
 
     <!-- ===== Stage 3: Output ===== -->
@@ -673,7 +674,10 @@ const fabCam       = document.getElementById('fabCam');
 const fabImg       = document.getElementById('fabImg');
 const selTitle     = document.getElementById('selTitle');
 // const wizBadge     = document.getElementById('wizBadge');
-const qToggle      = document.getElementById('qToggle');
+// (Quality toggle removed from UI — keep fixed quality under the hood)
+const FIXED_QUALITY = "high";
+const FIXED_COST_CREDITS = 2;
+
 const schem        = document.getElementById('schem');
 const previewBtn   = document.getElementById('previewBtn');
 const addBtn       = document.getElementById('addBtn');
@@ -689,13 +693,11 @@ const parts = ['back','seat','arms'];
 let sofaChosen   = false; // becomes true after an image is picked
 /** @type {Fabric[]} */
 let fabrics      = [];    // each item: { id, url, parts:Set<string> }
- /** @type {Assigned} */
+  /** @type {Assigned} */
 let assigned     = {back:null, seat:null, arms:null}; // which fabric id owns each part (or null)
 let idx          = 0;     // index of "current" fabric being edited
 let sofaBaseFile = null;  // keep original base sofa File for export
 
-// NEW: Global quality setting (standard | high)
-let generationQuality = "high";
 
 let historyPage = 1;
 let historyTotal = 0;
@@ -786,7 +788,6 @@ async function loadHistory(reset = false) {
         style="width:100%; border-radius:6px; display:block; cursor:pointer;">
       <div style="margin-top:6px;">
         <div>نوع: ${item.mode}</div>
-        <div>کیفیت: ${item.quality}</div>
         <div>هزینه: ${item.cost_credits}</div>
         <div>${new Date(item.created_at).toLocaleDateString("fa-IR")}</div>
       </div>
@@ -1078,8 +1079,8 @@ function downloadBlob(blob, filename){
 
 /** Build meta/files overview WITHOUT side effects (pure builder) */
 function buildSofaMetaAndFiles(){
-  // use global quality (no longer read from DOM)
-  const quality = generationQuality;
+  // Fixed quality (single-model, single-config)
+  const quality = FIXED_QUALITY;
 
 
   const included = [];
@@ -1262,19 +1263,6 @@ async function handleFabCamChange(e){
 }
 
 
-// Quality toggle: (high/standard) 
-function handleQToggleClick(e){
-  const b = e.target.closest('button');
-  if(!b) return;
-
-  // Update UI active state
-  [...qToggle.children].forEach(x=>x.classList.toggle('active',x===b));
-
-  // Update global quality state 
-  generationQuality = b.dataset.q;
-}
-
-
 // Part assignment rules (see original comments)
 function handleSchemClick(e){
   const btn=e.target.closest('.part'); if(!btn||!fabrics[idx]) return;
@@ -1324,7 +1312,8 @@ async function handlePreviewClick(){
   }
 
   // Compute required cost on client
-  const cost = (generationQuality === "high") ? 2 : 1;
+  const cost = FIXED_COST_CREDITS;
+
   // Call credits endpoint BEFORE validation & uploads
   let creditData;
   try {
@@ -1509,7 +1498,6 @@ toFabricsBtn.addEventListener('click', handleToFabricsClick);
 // Stage 2 (Fabrics)
 fabFile.addEventListener('change', handleFabFileChange);
 fabCam .addEventListener('change', handleFabCamChange);
-qToggle.addEventListener('click', handleQToggleClick);
 schem  .addEventListener('click', handleSchemClick);
 
 // Generate (Preview)
@@ -1745,7 +1733,7 @@ async function openCreationPreview(creationId) {
 
 
   creationPreviewMeta.textContent =
-    `نوع: ${data.mode} | کیفیت: ${data.quality} | تاریخ: ` +
+    `نوع: ${data.mode} | تاریخ: ` +
     new Date(data.created_at).toLocaleDateString("fa-IR");
 
   creationPreviewModal.style.display = "block";

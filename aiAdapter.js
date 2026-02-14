@@ -11,12 +11,11 @@ import FormData from "form-data";
  * Main entry point used by server.js
  * Returns: { buffer: Buffer, mimeType: string }
  */
-export async function generateImage({ meta, prompt, processedFiles }) {
-  
-  return await generateWithGemini3Pro({ meta, prompt, processedFiles });
 
-  // default: openai
-  // return await generateWithOpenAI({ meta, prompt, processedFiles });
+export async function generateImage({ meta, prompt, processedFiles }) {
+  // Fixed provider for now (single model, single configuration).
+  // Keep meta in the signature for future compatibility, but do not use meta.quality here.
+  return await generateWithGemini3Pro({ meta, prompt, processedFiles });
 }
 
 // -----------------------------------------
@@ -38,9 +37,12 @@ async function generateWithGemini3Pro({ meta, prompt, processedFiles }) {
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  // You can override via env GEMINI_IMAGE_SIZE_STANDARD / GEMINI_IMAGE_SIZE_HIGH.
+
+  // Fixed generation config (single quality/config for now).
+  // You may override globally via env, but NOT per-request via meta.
   const aspectRatio = process.env.GEMINI_ASPECT_RATIO || "1:1";
-  const imageSize = process.env.GEMINI_IMAGE_SIZE || "1K";
+  const imageSize   = process.env.GEMINI_IMAGE_SIZE   || "1K";
+
     
 
   // Build parts exactly like NanoPro.js, but using in-memory buffers.
