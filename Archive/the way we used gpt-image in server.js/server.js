@@ -605,7 +605,7 @@ Replace the fabric of all of the decorative pillows in the first image (includin
 `;
 
 const prompt4 = `
-Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green) and third fabric should be used for pillows tagged with F3 (blue). the tags should not be included in the generated image.
+Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabrics in the other images so that all of the pillows appear to be made from exactly that fabric, with exactly the same color and exactly the same pattern. For each pillow choose the fabric that results in the best overall composition and make sure that all of the fabrics are used. Each pillow should be covered with a single fabric. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
 
 
@@ -1838,38 +1838,140 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       prompt = prompt1;
     }
 
-    ///////////
     // -----------------------------------------------------------------------
-    // AI CALL (ABSTRACTED): OpenAI or Gemini via aiAdapter.js
-    // Controlled by env: AI_IMAGE_PROVIDER=openai|gemini
+    // QUALITY → INPUT_FIDELITY → SIZE MAPPING
+    //
+    // If meta.quality === "standard":
+    //      input_fidelity = "low"
+    //      quality       = "medium"
+    //      size          = "1024x1024"
+    //
+    // If meta.quality === "high":
+    //      input_fidelity = "high"
+    //      quality        = "high"
+    //      size           = "2048x2048"
     // -----------------------------------------------------------------------
-    let imageBuffer;
-    let outputMimeType = "image/png";
+    let fidelity;
+    let outQuality;
+    let model;
+    let size = "auto";
 
-    try {
-      const out = await generateImage({
-        meta,
-        prompt,
-        processedFiles
-      });
+    if (meta.quality === "high") {
+      model = "gpt-image-1";
+      fidelity = "low";
+      outQuality = "medium";
+      // size = "2048x2048";
+    } else {
+      model = "gpt-image-1-mini";
+      fidelity = "low";
+      outQuality = "high";
+      // size = "1024x1024";
+    }
+    // model = "gemini-3-pro-image-preview";
 
-      imageBuffer = out.buffer;
-      outputMimeType = out.mimeType || "image/png";
+    // -----------------------------------------------------------------------
+    // Build the form to send to OpenAI
+    // -----------------------------------------------------------------------
+    const form = new FormData();
 
-    } catch (e) {
+    // Required model configuration
+    form.append("model", model);
+
+    // Insert dynamic parameters
+    form.append("prompt", prompt);
+    form.append("input_fidelity", fidelity);
+    form.append("quality", outQuality);
+    form.append("size", size);
+    form.append("n", "1");   // always 1 image for now
+
+    
+    // Attach normalized files (base image and all fabric images)
+    // Each uploaded file has: fieldname, originalname, buffer
+    for (const f of processedFiles) {
+      if (f.fieldname === "base_image") {
+        // OpenAI requires this exact name:
+        form.append("image", f.buffer, { filename: f.originalname });
+      } else {
+        // Fabric images: any name is OK
+        form.append("image", f.buffer, { filename: f.originalname });
+      }
+    }
+
+
+
+
+    // === SAMPLE REQUEST FOR PROVIDER (SAFE TO LOG) ===
+    /*
+    console.log("=== SAMPLE OUTGOING REQUEST ===");
+    console.log("URL:", process.env.AI_MODEL_ENDPOINT);
+    console.log("Headers:", {
+      Authorization: "Bearer " + process.env.AI_MODEL_TOKEN
+    });
+    console.log("Content-Type:", form.getHeaders()["content-type"]);
+    console.log("Fields:", {
+      model: "gpt-image-1",
+      prompt,
+      input_fidelity: fidelity,
+      quality: outQuality,
+      size,
+      n: 1
+    });
+    console.log("Files:", files.map(f => ({
+      fieldname: f.fieldname,
+      filename: f.originalname,
+      size: f.size
+    })));
+    console.log("=== END OF SAMPLE REQUEST ===");
+    */
+
+    // -----------------------------------------------------------------------
+    // Send request to OpenAI Images Edit API
+    // -----------------------------------------------------------------------
+    const response = await fetch(process.env.AI_MODEL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + process.env.AI_MODEL_TOKEN
+      },
+      body: form
+    });
+
+    
+    if (!response.ok) {
+      const errText = await response.text();
+
       // Refund reserved credits because generation failed
       if (creditsReserved) {
-        try { refundCredits(req.userId, reservedCost); } catch (x) {}
+        try { refundCredits(req.userId, reservedCost); } catch (e) {}
         creditsReserved = false;
       }
 
       return res.status(500).json({
-        error: "AI request failed",
-        details: String(e?.message || e)
+        error: "OpenAI request failed",
+        details: errText
       });
     }
-    ///////////
 
+    
+
+    const data = await response.json();
+
+
+    if (!data.data || !data.data[0] || !data.data[0].b64_json) {
+      // Refund reserved credits because generation failed
+      if (creditsReserved) {
+        try { refundCredits(req.userId, reservedCost); } catch (e) {}
+        creditsReserved = false;
+      }
+
+      return res.status(500).json({
+        error: "No image returned from OpenAI"
+      });
+    }
+
+
+    // ====================== STORE OUTPUT IMAGE (CLOUD + DEDUP) ===================
+    // Output image buffer from OpenAI
+    const imageBuffer = Buffer.from(data.data[0].b64_json, "base64");
 
 
     // Upload output image ONCE (reused across retries)
@@ -1878,16 +1980,15 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     async function ensureOutputImageUploadedOnce() {
       if (outputImageInsert) return outputImageInsert;
 
-
       outputImageInsert = await insertImageNoDedup({
         userId: req.userId,
         buffer: imageBuffer,
-        mimeType: outputMimeType,
+        mimeType: "image/png",
         scope: "user",
         trace,
         role: "output_full"
       });
-      
+
 
       return outputImageInsert;
     }
@@ -2175,8 +2276,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
           // Output thumbnail (generated image)
           if (imageBuffer) {
-
-            const t = await generateThumbnail(imageBuffer, outputMimeType);
+            const t = await generateThumbnail(imageBuffer, "image/png");
 
             const up = await upsertImageForUser({
               userId: req.userId,
