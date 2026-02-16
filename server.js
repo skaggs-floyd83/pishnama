@@ -25,7 +25,8 @@ import dotenv from "dotenv";
 import sharp from "sharp";
 
 // AI model abstraction (OpenAI / Gemini)
-import { generateImage } from "./aiAdapter.js";
+// import { generateImage } from "./aiAdapter.js";
+import { generateImage } from "./aiAdapter_gap.js";
 
 // ===== NEW: Added for serving HTML files =====
 import path from "path";
