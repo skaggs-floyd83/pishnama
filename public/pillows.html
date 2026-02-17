@@ -1332,6 +1332,21 @@ function validateBeforeGenerateSofa(){
     if (!valid) {
       errors.push("\n- باید حداقل یک پارچه و حداقل یک بالشتک انتخاب‌ شده باشد.");
     }
+
+    if (fabricsWithImg.length > 1) {
+      const fabricsWithoutTags = fabrics
+        .map((f, i) => ({ f, i }))
+        .filter(({ f }) => !!f.url && (!Array.isArray(f.tags) || f.tags.length === 0))
+        .map(({ i }) => `پارچه ${faOrdinal(i + 1)}`);
+
+      if (fabricsWithoutTags.length > 0) {
+        errors.push(
+          "\n- برای هر پارچه باید حداقل یک بالشتک انتخاب شود. " +
+          "برای این پارچه‌ها هیچ بالشتکی انتخاب نشده است: " +
+          fabricsWithoutTags.join("، ")
+        );
+      }
+    }    
   }
 
 

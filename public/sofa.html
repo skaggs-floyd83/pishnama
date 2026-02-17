@@ -1026,7 +1026,11 @@ function validateBeforeGenerateSofa(){
     .map((f,i)=>({f,i}))
     .filter(({f})=> !!f.url && (!f.parts || f.parts.size===0))
     .map(({i})=> `پارچه ${faOrdinal(i+1)}`);
-  if(imgNoTags.length>0){
+
+  // If multiple fabrics are in use, each selected fabric must own at least one part.
+  if (fabricsWithImg.length > 1 && imgNoTags.length > 0) {
+    errors.push("\n- هر پارچه باید حداقل یک بخش داشته باشد. برای این پارچه‌ها بخشی انتخاب نشده است: " + imgNoTags.join("، "));
+  } else if(imgNoTags.length>0){
     warnings.push("\n- برای برخی پارچه‌ها بخشی تعیین نشده است: " + imgNoTags.join("، "));
   }
 
