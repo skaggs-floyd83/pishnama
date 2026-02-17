@@ -605,9 +605,6 @@ const prompt3 = `
 Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
 `;
 
-const prompt4 = `
-Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green) and third fabric should be used for pillows tagged with F3 (blue). the tags should not be included in the generated image.
-`;
 
 
 // ============================================================================
@@ -663,6 +660,43 @@ function buildPrompt2(meta) {
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
+
+// ============================================================================
+// Dynamic prompt for prompt4 (pillows multi-fabric with 1–3 fabrics)
+// ============================================================================
+
+function buildPrompt4(meta) {
+  const fabricCount = meta?.fabrics?.length || 0;
+
+  // SAFETY GUARD (should never happen because of hard limits, but safe anyway)
+  if (fabricCount < 1 || fabricCount > 3) {
+    throw new Error("Invalid number of fabrics for prompt4");
+  }
+
+  const PROMPT4_ONE_FABRIC = `
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabric in the uploaded image. The fabric should be used for pillows tagged with F1 (red). the tags should not be included in the generated image.
+`;
+
+  const PROMPT4_TWO_FABRICS = `
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green). the tags should not be included in the generated image.
+`;
+
+  const PROMPT4_THREE_FABRICS = `
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green) and third fabric should be used for pillows tagged with F3 (blue). the tags should not be included in the generated image.
+`;
+
+  if (fabricCount === 1) {
+    return PROMPT4_ONE_FABRIC;
+  }
+
+  if (fabricCount === 2) {
+    return PROMPT4_TWO_FABRICS;
+  }
+
+  return PROMPT4_THREE_FABRICS;
+}
+
+
 
 
 // ====================== LOGIN HELPERS ===========================
@@ -1840,13 +1874,12 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     }
     else if (meta.mode === "sofa" && meta.mode_selection === "partial") {
       prompt = buildPrompt2(meta);
-      // console.log(prompt);
     }
     else if (meta.mode === "pillows" && meta.mode_selection === "single") {
       prompt = prompt3;
     }
     else if (meta.mode === "pillows" && meta.mode_selection === "tagged") {
-      prompt = prompt4;
+      prompt = buildPrompt4(meta);
     }
     else {
       // fallback for unexpected values
