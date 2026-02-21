@@ -25,7 +25,7 @@ import dotenv from "dotenv";
 import sharp from "sharp";
 
 // AI model abstraction (OpenAI / Gemini)
-// import { generateImage } from "./aiAdapter.js";
+// import { generateImage } from "./aiAdapter_aval.js";
 import { generateImage } from "./aiAdapter_gap.js";
 
 // ===== NEW: Added for serving HTML files =====
@@ -594,15 +594,18 @@ const upload = multer({
 //  Replace the placeholders with your actual detailed prompts.
 // ---------------------------------------------------------------------------
 const prompt1 = `
-replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly and completely as it is in the first image. do not change anything like the carpet or such and keep them exactly as they are in the first image.
+replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric.
 `;
 // testing shirt replacement
 // const prompt1 = `
 // replace the fabric of the shirt of the boy with the fabric in the other image.
 // `;
 
+// const prompt3 = `
+// Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
+// `;
 const prompt3 = `
-Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
+Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric.
 `;
 
 
@@ -674,15 +677,15 @@ function buildPrompt4(meta) {
   }
 
   const PROMPT4_ONE_FABRIC = `
-Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabric in the uploaded image. The fabric should be used for pillows tagged with F1 (red). the tags should not be included in the generated image.
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabric in the uploaded image. The fabric should be used for pillows tagged with F1 (red). the tags should not be included in the generated image. Each marker marks only one pillow, and shouldn't affect other pillows. Keep the fabric of the pillows that are not tagged (do not have a marker on them) unchanged even if they are very close, or over, or under a tagged pillow.
 `;
 
   const PROMPT4_TWO_FABRICS = `
-Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green). the tags should not be included in the generated image.
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green). the tags should not be included in the generated image. Each marker marks only one pillow, and shouldn't affect other pillows. Keep the fabric of the pillows that are not tagged (do not have a marker on them) unchanged even if they are very close, or over, or under a tagged pillow.
 `;
 
   const PROMPT4_THREE_FABRICS = `
-Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green) and third fabric should be used for pillows tagged with F3 (blue). the tags should not be included in the generated image.
+Replace the fabric of the decorative pillows (including the probably dark ones or overlaid ones etc.) at marker locations using the fabrics in the uploaded images. first fabric should be used for pillows tagged with F1 (red), second fabric should be used for pillows tagged with F2 (green) and third fabric should be used for pillows tagged with F3 (blue). the tags should not be included in the generated image. Each marker marks only one pillow, and shouldn't affect other pillows. Keep the fabric of the pillows that are not tagged (do not have a marker on them) unchanged even if they are very close, or over, or under a tagged pillow.
 `;
 
   if (fabricCount === 1) {
@@ -1778,7 +1781,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     if (meta?.mode === "pillows" && meta?.mode_selection === "single" && fabricFiles.length !== 1) {
       return res.status(400).json({ error: "invalid_fabric_count" });
     }
-    if (meta?.mode === "pillows" && meta?.mode_selection === "tagged" && fabricFiles.length < 2) {
+    if (meta?.mode === "pillows" && meta?.mode_selection === "tagged" && (fabricFiles.length < 1 || fabricFiles.length > MAX_FABRICS_HARD)) {
       return res.status(400).json({ error: "invalid_fabric_count" });
     }
     // Sofa modes: allow 1..3 fabrics (partial can be 1; all can be 1..3 depending on UI)

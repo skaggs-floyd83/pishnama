@@ -126,14 +126,9 @@
   /* Fixed heights used in mobile-safe viewport */
   #sofaThumb, #baseFrame { height: 220px !important; width: 100%; }
   #baseFrame img {
-    margin-left: auto;
-    margin-right: auto;
-  }
-  
-#tagFrame img {
   margin-left: auto;
   margin-right: auto;
-}  
+}
 
   #navRow{margin:0 10px;display:flex;justify-content:space-between;align-items:center}
   .tagsHeader{margin-top:14px;margin-bottom:6px;font-size:.95rem;color:var(--muted);}
@@ -967,21 +962,6 @@ function gotoUpload(){
 function gotoFabrics(){
   stepUpload.classList.remove('active');
   stepFabrics.classList.add('active');
-
- ////////
-  if (pillowsBaseFile && baseImg2) {
-    loadImage(baseImg2, pillowsBaseFile);
-  }
- 
-  if (modeSelection === "tagged" && pillowsBaseFile && tagBaseImg) {
-    const u = URL.createObjectURL(pillowsBaseFile);
-    tagBaseImg.src = u;
-    tagBaseImg.onload = () => { 
-      try { URL.revokeObjectURL(u); } catch(e){} 
-    };
-  }
-////////
-
   updateUI();
 }
 
@@ -1642,8 +1622,8 @@ async function handlePreviewClick(){
       enterRestoreLoading();
 
       //temporary
-      // window.open(URL.createObjectURL(annotatedBlob));
-      // return;
+      window.open(URL.createObjectURL(annotatedBlob));
+      return;
 
       const imageBase64 = await sendToBackend(meta, included, annotatedFile, pillowsBaseFile);
 
