@@ -594,8 +594,8 @@ const upload = multer({
 //  Replace the placeholders with your actual detailed prompts.
 // ---------------------------------------------------------------------------
 const prompt1 = `
-replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric.
-`;
+replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern.
+`;                                                                                                                                         
 // testing shirt replacement
 // const prompt1 = `
 // replace the fabric of the shirt of the boy with the fabric in the other image.
