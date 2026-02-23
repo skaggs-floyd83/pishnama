@@ -703,6 +703,8 @@ let historyPage = 1;
 let historyTotal = 0;
 const HISTORY_PAGE_SIZE = 20;
 
+let isGenerating = false; // prevents double-click / multi-submit
+
 
 /* =============================== Helpers ================================== */
 
@@ -964,7 +966,7 @@ function updateUI(){
   });
 
   // 5) Generate is always enabled; validation happens on click now
-  previewBtn.disabled = false;
+  previewBtn.disabled = isGenerating;
 
   // 3) Add Fabric management
   if(fabrics.length>=3){
@@ -1314,6 +1316,12 @@ async function handlePreviewClick(){
       loginModal.style.display = "flex";   // show the login modal automatically
       return;
   }
+  if (isGenerating) return;
+  isGenerating = true;
+  enterLoadingState();
+  updateUI();
+  
+  try {  
 
   // Compute required cost on client
   const cost = FIXED_COST_CREDITS;
@@ -1372,9 +1380,14 @@ async function handlePreviewClick(){
   } finally {
     exitRestoreLoading();
   }
-
-
-
+} finally {
+  // If we returned early (credits/validation/warnings), unlock the UI.
+  if (isGenerating) {
+    isGenerating = false
+    exitLoadingState()
+    updateUI()
+  }
+}
 }
 
 // Remove current fabric (clears image + parts, reorders, selects next)

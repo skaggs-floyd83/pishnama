@@ -1070,6 +1070,11 @@ function readCookie(req, name) {
 const rateBuckets = new Map(); 
 // key -> { count, resetAt }
 
+// ====================== GENERATION CONCURRENCY LOCK (single-instance) ===========================
+// Prevent multiple concurrent /api/generate calls per user (double-click / spam).
+const generateInFlight = new Set(); // userId
+
+
 function rateLimit({ key, limit, windowMs }) {
   const now = Date.now();
   let bucket = rateBuckets.get(key);
@@ -1711,11 +1716,36 @@ app.post("/api/buy-credits", express.json(), (req, res) => {
 // ============================================================================
 app.post("/api/generate", upload.any(), async (req, res) => {
 
+  let didLock = false;
+
   // Track credit reservation so we can safely refund on any failure path
   let creditsReserved = false;
   let reservedCost = 0;
 
   try {
+
+    // Must be logged in
+    if (!req.userId) {
+      return res.status(401).json({ error: "login_required" });
+    }
+
+    // Concurrency guard: only 1 in-flight generation per user
+    if (generateInFlight.has(req.userId)) {
+      return res.status(409).json({ error: "generation_in_progress" });
+    }
+    generateInFlight.add(req.userId);
+    didLock = true;
+
+    // Rate limit protection (anti-burst, NOT the main usage cap)
+    const rl = rateLimit({ 
+      key: `generate:${req.userId}`, 
+      limit: 30, 
+      windowMs: 10 * 60 * 1000  // 10 minutes
+    });
+    if (!rl.allowed) {
+      return res.status(429).json({ error: "rate_limited" });
+    }
+    
 
 
     // -----------------------------------------------------------------------
@@ -1824,20 +1854,13 @@ app.post("/api/generate", upload.any(), async (req, res) => {
     // const creditInfo = getUserCredits(req.userId);
     // console.log("User credits state:", creditInfo);
 
+    
 
-    if (!req.userId) {
-      return res.status(401).json({ error: "login_required" });
-    }
+    
+    
 
-    // Rate limit protection
-    const rl = rateLimit({
-      key: `generate:${req.userId}`,
-      limit: 5,
-      windowMs: 60 * 60 * 1000 // 1 hour
-    });
-    if (!rl.allowed) {
-      return res.status(429).json({ error: "rate_limited" });
-    }
+
+
 
 
     // ====================== CREDIT RESERVATION (ATOMIC) ===========================
@@ -2388,10 +2411,7 @@ app.post("/api/generate", upload.any(), async (req, res) => {
 
 
 
-  }
-
-  
-  catch (err) {
+  } catch (err) {
     // Refund reserved credits on any unexpected failure path
     try {
       if (req.userId && typeof creditsReserved !== "undefined" && creditsReserved) {
@@ -2404,8 +2424,14 @@ app.post("/api/generate", upload.any(), async (req, res) => {
       error: "Server error",
       details: err.message
     });
+  } finally {
+    if (didLock) {
+      generateInFlight.delete(req.userId);
+    }
   }
+  
 });
+
 
 
 
