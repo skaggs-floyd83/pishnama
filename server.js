@@ -593,13 +593,14 @@ const upload = multer({
 //  Define ALL FOUR PROMPTS explicitly
 //  Replace the placeholders with your actual detailed prompts.
 // ---------------------------------------------------------------------------
-const prompt1 = `
-replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern.
-`;                                                                                                                                         
-// testing shirt replacement
 // const prompt1 = `
-// replace the fabric of the shirt of the boy with the fabric in the other image.
+// replace the fabric of the sofa with the fabric in the other image so that all parts of the sofa appear to be made from exactly that fabric, with the same color and the same pattern.
 // `;
+const prompt1 = `
+The first image includes a sofa. replace the fabric of the “sofa parts” (back, seat, arms) using the fabric in the other image so that all of the sofa parts appear to be made from exactly that fabric, with the same color and the same pattern. The dimention of the generated image should be as close as possible to the sofa image. the dimention of the fabric image is irrelevant.
+`;
+// The reupholstered parts of the sofa should appear to be made from exactly the associated fabric, with the same color and the same pattern. Do not change anything else and keep everything else exactly and completely as it is in the first image. Do not change anything like the carpet or such and keep them exactly as they are in the first image.
+
 
 // const prompt3 = `
 // Replace the fabric of all of the decorative pillows in the first image (including the probably dark ones or overlaid ones etc.), with the fabric in the second image so that all pillows appear to be made from exactly that fabric, with the same color and the same pattern. do not change anything else and keep everything else exactly as it is in the first image (this is very important). do not change anything like the carpet or such and keep them exactly as they are in the first image.
