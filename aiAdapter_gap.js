@@ -76,7 +76,7 @@ async function generateWithGemini3Pro({ meta, prompt, processedFiles }) {
   const body = {
     contents: [{ role: "user", parts }],
     generationConfig: {
-      responseModalities: ["TEXT", "IMAGE"],
+      responseModalities: ["IMAGE"],
       imageConfig: {
         aspectRatio,
         imageSize

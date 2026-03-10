@@ -78,7 +78,7 @@ async function generateWithAvalAIChat({ meta, prompt, processedFiles }) {
     model,
     messages: [{ role: "user", content }],
     // AvalAI sample for this model includes modalities=["image","text"]
-    modalities: ["image", "text"]
+    modalities: ["image"]
   };
 
   const res = await fetch(url, {
